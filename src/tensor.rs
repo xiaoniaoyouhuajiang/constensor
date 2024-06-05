@@ -1,5 +1,8 @@
 use crate::{DType, Device, Result, Shape, R1, R2, R3};
-use std::{marker::PhantomData, ops::Add};
+use std::{
+    marker::PhantomData,
+    ops::{Add, Div, Mul, Sub},
+};
 
 pub struct Tensor<S: Shape, D: DType> {
     inner: candle_core::Tensor,
@@ -40,12 +43,21 @@ impl<S: Shape, D: DType> Tensor<S, D> {
     }
 }
 
-impl<S: Shape, D: DType> Add for Tensor<S, D> {
-    type Output = Result<Tensor<S, D>>;
-    fn add(self, rhs: Self) -> Self::Output {
-        Ok(Self::from_tensor(self.inner.add(&rhs.inner)?))
-    }
+macro_rules! binary_op {
+    ($trait:ident, $fn:ident) => {
+        impl<S: Shape, D: DType> $trait for Tensor<S, D> {
+            type Output = Result<Tensor<S, D>>;
+            fn $fn(self, rhs: Self) -> Self::Output {
+                Ok(Self::from_tensor(self.inner.$fn(&rhs.inner)?))
+            }
+        }
+    };
 }
+
+binary_op!(Add, add);
+binary_op!(Mul, mul);
+binary_op!(Sub, sub);
+binary_op!(Div, div);
 
 macro_rules! to_data {
     (($($C:ident),*), ($($N:tt),*), $rank:ident, $out:ty, $fn:ident) => {
