@@ -1,4 +1,5 @@
-pub trait Shape {
+/// Marker trait for shapes
+pub trait Shape: Clone {
     fn shape() -> Vec<usize>;
     fn element_count() -> usize {
         Self::shape().iter().product()
@@ -7,6 +8,7 @@ pub trait Shape {
 
 macro_rules! shape {
     (($($C:ident),*), ($($N:tt),*), $name:ident) => {
+        #[derive(Clone)]
         pub struct $name<$($C $N: usize, )*>;
 
         impl<$($C $N: usize, )*> Shape for $name<$({ $N }, )*> {

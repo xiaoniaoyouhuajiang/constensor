@@ -1,95 +1,112 @@
-use crate::{device::Device, storage::Storage, DType, Result, Shape, R1, R2, R3};
-use std::{
-    borrow::Cow,
-    marker::PhantomData,
-    ops::Deref,
-    sync::atomic::{AtomicUsize, Ordering},
+use crate::{
+    device::{Cpu, Cuda, Dev},
+    storage::Storage,
+    DType, Result, Shape, R1, R2, R3,
 };
+use std::{borrow::Cow, marker::PhantomData, ops::Deref, sync::Arc};
 
-static TENSOR_ID: AtomicUsize = AtomicUsize::new(0);
-
-pub struct TensorId(usize);
-
-impl TensorId {
-    fn next() -> Self {
-        Self(TENSOR_ID.fetch_add(1, Ordering::Relaxed))
-    }
+#[derive(Clone)]
+pub struct Tensor_<S: Shape, T: DType, D: Dev> {
+    storage: Arc<Storage<T>>,
+    _ghost: PhantomData<(S, T, D)>,
 }
 
-impl Deref for TensorId {
-    type Target = usize;
+/// Tensors are n dimensional arrays. Only functions which allocate, copy
+/// data, or do operations return `Result`s, so applying functions does not
+/// return a result and instead builds up the graph.
+#[derive(Clone)]
+pub struct Tensor<S: Shape, T: DType, D: Dev>(Arc<Tensor_<S, T, D>>);
+
+impl<S: Shape, T: DType, D: Dev> Deref for Tensor<S, T, D> {
+    type Target = Tensor_<S, T, D>;
+
     fn deref(&self) -> &Self::Target {
-        &self.0
+        self.0.as_ref()
     }
 }
 
-pub struct Tensor<S: Shape, T: DType> {
-    id: TensorId,
-    storage: Storage<T>,
-    _ghost: PhantomData<(S, T)>,
+fn from_storage<S: Shape, T: DType, D: Dev>(storage: Arc<Storage<T>>) -> Tensor<S, T, D> {
+    Tensor(Arc::new(Tensor_ {
+        storage,
+        _ghost: PhantomData,
+    }))
 }
 
-impl<S: Shape, T: DType> Tensor<S, T> {
-    pub fn zeros(device: &Device) -> Result<Self> {
-        Ok(Self {
-            id: TensorId::next(),
-            storage: device.const_impl::<T, S>(T::ZERO)?,
-            _ghost: PhantomData,
-        })
-    }
-    pub fn full(v: T, device: &Device) -> Result<Self> {
-        Ok(Self {
-            id: TensorId::next(),
-            storage: device.const_impl::<T, S>(v)?,
-            _ghost: PhantomData,
-        })
-    }
-}
-
-impl<T: DType, const A: usize> Tensor<R1<A>, T> {
-    /// Get data for a tensor.
-    pub fn data(&self) -> Result<Cow<Vec<T>>> {
-        let data = self.storage.to_cpu_storage()?;
-        Ok(Cow::Owned(data.into_owned().0))
-    }
-}
-
-impl<T: DType, const A: usize, const B: usize> Tensor<R2<A, B>, T> {
-    /// Get data for a tensor.
-    pub fn data(&self) -> Result<Cow<Vec<Vec<T>>>> {
-        let data = self.storage.to_cpu_storage()?;
-        let mut rows = Vec::new();
-        for i in 0..A {
-            let row = (0..B).map(|j| data.as_ref().0[i * A + j]).collect();
-            rows.push(row)
-        }
-        Ok(Cow::Owned(rows))
-    }
-}
-
-impl<T: DType, const A: usize, const B: usize, const C: usize> Tensor<R3<A, B, C>, T> {
-    /// Get data for a tensor.
-    pub fn data(&self) -> Result<Cow<Vec<Vec<Vec<T>>>>> {
-        let data = self.storage.to_cpu_storage()?;
-        let mut top_rows = Vec::new();
-        for i in 0..A {
-            let mut rows = Vec::new();
-            for j in 0..B {
-                let row = (0..C).map(|k| data.as_ref().0[i * A + j * B + k]).collect();
-                rows.push(row)
+macro_rules! tensor_api {
+    ($device:ty) => {
+        impl<S: Shape, T: DType> Tensor<S, T, $device> {
+            pub fn full(v: T) -> Result<Self> {
+                let device = <$device>::resolve()?;
+                Ok(from_storage(Arc::new(device.const_impl::<T, S>(v)?)))
             }
-            top_rows.push(rows);
+            pub fn zeros() -> Result<Self> {
+                Self::full(T::ZERO)
+            }
+            pub fn ones() -> Result<Self> {
+                Self::full(T::ONE)
+            }
+            pub fn zeros_like(&self) -> Result<Self> {
+                Tensor::<S, T, $device>::zeros()
+            }
+            pub fn ones_like(&self) -> Result<Self> {
+                Tensor::<S, T, $device>::ones()
+            }
+            pub fn full_like(&self, v: T) -> Result<Self> {
+                Tensor::<S, T, $device>::full(v)
+            }
         }
-        Ok(Cow::Owned(top_rows))
-    }
+
+        impl<T: DType, const A: usize> Tensor<R1<A>, T, $device> {
+            /// Get data for a vector.
+            pub fn data(&self) -> Result<Cow<Vec<T>>> {
+                let data = self.storage.to_cpu_storage()?;
+                Ok(Cow::Owned(data.into_owned().0))
+            }
+        }
+
+        impl<T: DType, const A: usize, const B: usize> Tensor<R2<A, B>, T, $device> {
+            /// Get data for a matrix.
+            pub fn data(&self) -> Result<Cow<Vec<Vec<T>>>> {
+                let data = self.storage.to_cpu_storage()?;
+                let mut rows = Vec::new();
+                for i in 0..A {
+                    let row = (0..B).map(|j| data.as_ref().0[i * A + j]).collect();
+                    rows.push(row)
+                }
+                Ok(Cow::Owned(rows))
+            }
+        }
+
+        impl<T: DType, const A: usize, const B: usize, const C: usize>
+            Tensor<R3<A, B, C>, T, $device>
+        {
+            /// Get data for a 3 dimensional tensor.
+            pub fn data(&self) -> Result<Cow<Vec<Vec<Vec<T>>>>> {
+                let data = self.storage.to_cpu_storage()?;
+                let mut top_rows = Vec::new();
+                for i in 0..A {
+                    let mut rows = Vec::new();
+                    for j in 0..B {
+                        let row = (0..C).map(|k| data.as_ref().0[i * A + j * B + k]).collect();
+                        rows.push(row)
+                    }
+                    top_rows.push(rows);
+                }
+                Ok(Cow::Owned(top_rows))
+            }
+        }
+    };
 }
+
+tensor_api!(Cpu);
+tensor_api!(Cuda<0>);
 
 /*macro_rules! binary_op {
     ($trait:ident, $fn:ident) => {
         impl<S: Shape, D: DType> $trait for Tensor<S, D> {
             type Output = Result<Tensor<S, D>>;
             fn $fn(self, rhs: Self) -> Self::Output {
-                Ok(Self::from_tensor(self.inner.$fn(&rhs.inner)?))
+                Ok(Self::fromTensor_(self.inner.$fn(&rhs.inner)?))
             }
         }
     };
