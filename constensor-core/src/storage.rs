@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
-use crate::{cpu_storage::CpuStorage, DType, Result, Shape};
 #[cfg(feature = "cuda")]
-use cuda_backend::CudaStorage;
+use crate::cuda_backend::CudaStorage;
+use crate::{cpu_storage::CpuStorage, DType, Result, Shape};
 
 pub enum Storage<T: DType> {
     #[cfg(feature = "cuda")]

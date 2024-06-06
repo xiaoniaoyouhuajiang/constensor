@@ -1,3 +1,5 @@
+#[cfg(feature = "cuda")]
+use crate::cuda_backend::CudaDevice;
 use crate::{
     cpu_storage::CpuDevice,
     storage::{BackendDevice, Storage},
@@ -27,8 +29,6 @@ macro_rules! cuda_device {
     ($ord:expr) => {
         impl Dev for Cuda<$ord> {
             fn resolve() -> Result<Device> {
-                use crate::cuda_backend::CudaDevice;
-
                 Ok(Device::Cuda(CudaDevice::new($ord)?))
             }
         }
