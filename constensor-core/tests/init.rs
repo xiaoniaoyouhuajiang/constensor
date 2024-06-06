@@ -95,8 +95,6 @@ test_device_dtype!(u32, Cuda<0>, 0, 1, u32::MAX, u32_test_cuda);
 #[cfg(feature = "cuda")]
 test_device_dtype!(i64, Cuda<0>, 0, 1, i64::MAX, i64_test_cuda);
 #[cfg(all(feature = "half", feature = "cuda"))]
-use half::f16;
-#[cfg(all(feature = "half", feature = "cuda"))]
 test_device_dtype!(
     f16,
     Cuda<0>,
@@ -105,8 +103,6 @@ test_device_dtype!(
     f16::from_f32_const(0.5),
     f16_test_cuda
 );
-#[cfg(all(feature = "bfloat", feature = "cuda"))]
-use half::bf16;
 #[cfg(all(feature = "bfloat", feature = "cuda"))]
 test_device_dtype!(
     bf16,
