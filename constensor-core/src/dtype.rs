@@ -1,9 +1,19 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "cuda")]
 use cudarc::driver::DeviceRepr;
 
+#[cfg(feature = "cuda")]
 /// Marker trait for tensor datatypes.
 pub trait DType: Debug + DeviceRepr + Clone + Copy {
+    const ZERO: Self;
+    const ONE: Self;
+    const NAME: &'static str;
+}
+
+#[cfg(not(feature = "cuda"))]
+/// Marker trait for tensor datatypes.
+pub trait DType: Debug + Clone + Copy {
     const ZERO: Self;
     const ONE: Self;
     const NAME: &'static str;

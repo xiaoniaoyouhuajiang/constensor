@@ -3,7 +3,6 @@ mod error;
 use cudarc::driver::{CudaFunction, CudaSlice, LaunchAsync, LaunchConfig};
 use error::{CudaError, WrapErr};
 
-mod kernels;
 use crate::{
     cpu_storage::CpuStorage,
     storage::{BackendDevice, BackendStorage},
@@ -76,7 +75,7 @@ impl<T: DType> BackendDevice<T> for CudaDevice {
     fn const_impl<S: Shape>(&self, v: T) -> Result<Self::Storage> {
         let n_elems = S::element_count();
         let data = unsafe { self.device.alloc::<T>(n_elems) }.w()?;
-        let func = self.get_or_load_func::<T>("fill", kernels::FILL)?;
+        let func = self.get_or_load_func::<T>("fill", constensor_cuda_kernels::FILL)?;
         let params = (&data, v, n_elems);
         let cfg = LaunchConfig::for_num_elems(n_elems as u32);
         unsafe { func.launch(cfg, params) }.w()?;

@@ -1,4 +1,7 @@
-use const_tensor::{Cpu, Cuda, Tensor, R1, R2, R3};
+use constensor_core::{Cpu, Tensor, R1, R2, R3};
+
+#[cfg(feature = "cuda")]
+use constensor_core::Cuda;
 
 macro_rules! test_device_dtype {
     ($dtype:ty, $dev:ty, $zero:expr, $one:expr, $full:expr, $dtype_mod:ident) => {
@@ -56,3 +59,16 @@ test_device_dtype!(bool, Cpu, false, true, false, bool_test);
 test_device_dtype!(u8, Cpu, 0, 1, u8::MAX, u8_test);
 test_device_dtype!(u32, Cpu, 0, 1, u32::MAX, u32_test);
 test_device_dtype!(i64, Cpu, 0, 1, i64::MAX, i64_test);
+
+#[cfg(feature = "cuda")]
+test_device_dtype!(f32, Cuda<0>, 0.0, 1.0, std::f32::consts::PI, f32_test);
+#[cfg(feature = "cuda")]
+test_device_dtype!(f64, Cuda<0>, 0.0, 1.0, std::f64::consts::PI, f64_test);
+#[cfg(feature = "cuda")]
+test_device_dtype!(bool, Cuda<0>, false, true, false, bool_test);
+#[cfg(feature = "cuda")]
+test_device_dtype!(u8, Cuda<0>, 0, 1, u8::MAX, u8_test);
+#[cfg(feature = "cuda")]
+test_device_dtype!(u32, Cuda<0>, 0, 1, u32::MAX, u32_test);
+#[cfg(feature = "cuda")]
+test_device_dtype!(i64, Cuda<0>, 0, 1, i64::MAX, i64_test);

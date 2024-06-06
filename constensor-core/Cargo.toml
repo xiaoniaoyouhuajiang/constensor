@@ -1,0 +1,19 @@
+[package]
+name = "constensor-core"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+readme = "README.md"
+
+[dependencies]
+constensor-cuda-kernels = { workspace = true, optional = true }
+cudarc = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[features]
+default = []
+cuda = ["cudarc", "dep:constensor-cuda-kernels"]

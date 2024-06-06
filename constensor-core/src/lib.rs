@@ -1,4 +1,5 @@
 mod cpu_storage;
+#[cfg(feature = "cuda")]
 mod cuda_backend;
 mod device;
 mod dtype;
@@ -9,7 +10,9 @@ mod shape;
 mod storage;
 mod tensor;
 
-pub use device::{Cpu, Cuda};
+pub use device::Cpu;
+#[cfg(feature = "cuda")]
+pub use device::Cuda;
 pub use dtype::DType;
 pub use error::{Error, Result};
 pub use graph::{Graph, Op};

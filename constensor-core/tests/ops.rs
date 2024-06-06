@@ -1,4 +1,4 @@
-use const_tensor::{Cpu, Graph, GraphTensor, Op, R2};
+use constensor_core::{Cpu, Graph, GraphTensor, Op, R2};
 
 #[test]
 fn fill() {

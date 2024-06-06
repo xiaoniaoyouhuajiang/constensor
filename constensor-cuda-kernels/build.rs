@@ -4,5 +4,5 @@ fn main() {
     let builder = bindgen_cuda::Builder::default();
     println!("cargo:info={builder:?}");
     let bindings = builder.build_ptx().unwrap();
-    bindings.write("src/kernels/mod.rs").unwrap();
+    bindings.write("src/lib.rs").unwrap();
 }

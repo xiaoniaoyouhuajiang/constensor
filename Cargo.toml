@@ -1,11 +1,22 @@
-[package]
-name = "const_tensor"
+[workspace]
+members = [
+    "constensor-core",
+]
+exclude = [
+   "constensor-cuda-kernels",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+description = "ML framework featuring compile time checks and accelerated by a JIT compiler."
+repository = "TODO"
+keywords = ["blas", "tensor", "machine-learning"]
+categories = ["science"]
+license = "MIT OR Apache-2.0"
 
-[dependencies]
-cudarc = { version = "0.11.4", features = ["cuda-12020"] }
+[workspace.dependencies]
+cudarc = { version = "0.11.4", features = ["std", "cublas", "cublaslt", "curand", "driver", "nvrtc", "f16", "cuda-version-from-build-system", "dynamic-linking"], default-features=false }
 thiserror = "1.0.61"
-
-[build-dependencies]
-bindgen_cuda = "0.1.5"
+constensor-cuda-kernels = { path = "./constensor-cuda-kernels", version = "0.1.0" }

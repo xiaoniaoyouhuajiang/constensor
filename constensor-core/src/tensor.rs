@@ -1,8 +1,12 @@
 use crate::{
-    device::{Cpu, Cuda, Dev},
+    device::{Cpu, Dev},
     storage::Storage,
     DType, Result, Shape, R1, R2, R3,
 };
+
+#[cfg(feature = "cuda")]
+use crate::device::Cuda;
+
 use std::{borrow::Cow, marker::PhantomData, ops::Deref, sync::Arc};
 
 #[derive(Clone)]
@@ -99,6 +103,7 @@ macro_rules! tensor_api {
 }
 
 tensor_api!(Cpu);
+#[cfg(feature = "cuda")]
 tensor_api!(Cuda<0>);
 
 /*macro_rules! binary_op {
