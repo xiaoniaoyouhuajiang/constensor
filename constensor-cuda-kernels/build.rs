@@ -1,3 +1,12 @@
+use std::hash::{Hash, Hasher};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+
+/// Error messages
+#[derive(Debug)]
+pub enum Error {}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
