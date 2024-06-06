@@ -14,3 +14,8 @@ Constensor is a fast alternative to Candle which provides the following key feat
 - **Compile time shape, dtype, and device checking**: Develop quickly
 - **Opt-in half precision support**: Run on any GPU
 - **Elementwise JIT kernel fusion**: Accelerate CUDA kernels automatically
+
+## Opt-in half precision support
+Via the following feature flags:
+- `half` for f16
+- `bfloat` for bf16
