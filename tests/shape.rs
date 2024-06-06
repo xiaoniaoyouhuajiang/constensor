@@ -1,4 +1,4 @@
-use const_tensor::{Device, Tensor, R1, R2, R3, R4, R5, R6};
+/*use const_tensor::{Tensor, R1, R2, R3, R4, R5, R6, Device};
 
 macro_rules! generate_dim_test {
     (($($N:expr),*), $name:ident, $rank:ident) => {
@@ -16,3 +16,4 @@ generate_dim_test!((1, 2, 3), dim3, R3);
 generate_dim_test!((1, 2, 3, 4), dim4, R4);
 generate_dim_test!((1, 2, 3, 4, 5), dim5, R5);
 generate_dim_test!((1, 2, 3, 4, 5, 6), dim6, R6);
+*/

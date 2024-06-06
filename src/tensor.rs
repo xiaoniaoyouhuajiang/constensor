@@ -1,49 +1,90 @@
-use crate::{DType, Device, Result, Shape, R1, R2, R3};
+use crate::{device::Device, storage::Storage, DType, Result, Shape, R1, R2, R3};
 use std::{
+    borrow::Cow,
     marker::PhantomData,
-    ops::{Add, Div, Mul, Sub},
+    ops::Deref,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
-pub struct Tensor<S: Shape, D: DType> {
-    inner: candle_core::Tensor,
-    _ghost: PhantomData<(S, D)>,
+static TENSOR_ID: AtomicUsize = AtomicUsize::new(0);
+
+pub struct TensorId(usize);
+
+impl TensorId {
+    fn next() -> Self {
+        Self(TENSOR_ID.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
-impl<S: Shape, D: DType> Tensor<S, D> {
-    pub(crate) fn from_tensor(inner: candle_core::Tensor) -> Self {
-        Self {
-            inner,
-            _ghost: PhantomData,
-        }
+impl Deref for TensorId {
+    type Target = usize;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
+}
 
+pub struct Tensor<S: Shape, T: DType> {
+    id: TensorId,
+    storage: Storage<T>,
+    _ghost: PhantomData<(S, T)>,
+}
+
+impl<S: Shape, T: DType> Tensor<S, T> {
     pub fn zeros(device: &Device) -> Result<Self> {
         Ok(Self {
-            inner: candle_core::Tensor::zeros(S::shape(), D::DTYPE, device)?,
+            id: TensorId::next(),
+            storage: device.const_impl::<T, S>(T::ZERO)?,
             _ghost: PhantomData,
         })
     }
-
-    pub fn ones(device: &Device) -> Result<Self> {
+    pub fn full(v: T, device: &Device) -> Result<Self> {
         Ok(Self {
-            inner: candle_core::Tensor::ones(S::shape(), D::DTYPE, device)?,
+            id: TensorId::next(),
+            storage: device.const_impl::<T, S>(v)?,
             _ghost: PhantomData,
         })
-    }
-
-    pub fn full(data: D, device: &Device) -> Result<Self> {
-        Ok(Self {
-            inner: candle_core::Tensor::full(data, S::shape(), device)?,
-            _ghost: PhantomData,
-        })
-    }
-
-    pub fn shape(&self) -> Vec<usize> {
-        S::shape()
     }
 }
 
-macro_rules! binary_op {
+impl<T: DType, const A: usize> Tensor<R1<A>, T> {
+    /// Get data for a tensor.
+    pub fn data(&self) -> Result<Cow<Vec<T>>> {
+        let data = self.storage.to_cpu_storage()?;
+        Ok(Cow::Owned(data.into_owned().0))
+    }
+}
+
+impl<T: DType, const A: usize, const B: usize> Tensor<R2<A, B>, T> {
+    /// Get data for a tensor.
+    pub fn data(&self) -> Result<Cow<Vec<Vec<T>>>> {
+        let data = self.storage.to_cpu_storage()?;
+        let mut rows = Vec::new();
+        for i in 0..A {
+            let row = (0..B).map(|j| data.as_ref().0[i * A + j]).collect();
+            rows.push(row)
+        }
+        Ok(Cow::Owned(rows))
+    }
+}
+
+impl<T: DType, const A: usize, const B: usize, const C: usize> Tensor<R3<A, B, C>, T> {
+    /// Get data for a tensor.
+    pub fn data(&self) -> Result<Cow<Vec<Vec<Vec<T>>>>> {
+        let data = self.storage.to_cpu_storage()?;
+        let mut top_rows = Vec::new();
+        for i in 0..A {
+            let mut rows = Vec::new();
+            for j in 0..B {
+                let row = (0..C).map(|k| data.as_ref().0[i * A + j * B + k]).collect();
+                rows.push(row)
+            }
+            top_rows.push(rows);
+        }
+        Ok(Cow::Owned(top_rows))
+    }
+}
+
+/*macro_rules! binary_op {
     ($trait:ident, $fn:ident) => {
         impl<S: Shape, D: DType> $trait for Tensor<S, D> {
             type Output = Result<Tensor<S, D>>;
@@ -58,18 +99,4 @@ binary_op!(Add, add);
 binary_op!(Mul, mul);
 binary_op!(Sub, sub);
 binary_op!(Div, div);
-
-macro_rules! to_data {
-    (($($C:ident),*), ($($N:tt),*), $rank:ident, $out:ty, $fn:ident) => {
-        impl<D: DType, $($C $N: usize, )*> Tensor<$rank<$({ $N }, )*>, D> {
-            /// Get data for a tensor.
-            pub fn data(&self) -> $out {
-                self.inner.$fn().unwrap()
-            }
-        }
-    };
-}
-
-to_data!((const), (A), R1, Vec<D>, to_vec1);
-to_data!((const, const), (A, B), R2, Vec<Vec<D>>, to_vec2);
-to_data!((const, const, const), (A, B, C), R3, Vec<Vec<Vec<D>>>, to_vec3);
+*/

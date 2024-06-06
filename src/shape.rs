@@ -1,5 +1,8 @@
 pub trait Shape {
     fn shape() -> Vec<usize>;
+    fn element_count() -> usize {
+        Self::shape().iter().product()
+    }
 }
 
 macro_rules! shape {
