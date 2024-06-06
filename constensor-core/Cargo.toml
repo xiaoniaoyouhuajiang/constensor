@@ -13,7 +13,10 @@ readme = "README.md"
 constensor-cuda-kernels = { workspace = true, optional = true }
 cudarc = { workspace = true, optional = true }
 thiserror.workspace = true
+half = { workspace = true, optional = true }
 
 [features]
 default = []
 cuda = ["cudarc", "dep:constensor-cuda-kernels"]
+half = ["dep:half"]
+bfloat = ["dep:half"]
