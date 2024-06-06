@@ -1,5 +1,5 @@
 <h1 align="center">
-  mistral.rs
+  constensor
 </h1>
 
 <h3 align="center">
