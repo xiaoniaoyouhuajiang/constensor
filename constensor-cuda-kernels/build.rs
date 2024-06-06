@@ -1,5 +1,3 @@
-use std::hash::Hasher;
-
 /// Error messages
 #[derive(Debug)]
 pub enum Error {}
@@ -7,6 +5,7 @@ pub enum Error {}
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
+    #[cfg(any(feature = "half", feature = "bfloat"))]
     let compute_cap = compute_cap().unwrap();
     
     #[cfg(feature = "half")]
