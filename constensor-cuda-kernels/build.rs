@@ -11,12 +11,12 @@ fn main() {
     
     #[cfg(feature = "half")]
     if compute_cap < 53 {
-        panic("`half` is only supported for CUDA compute cap >= 5.3");
+        panic!("`half` is only supported for CUDA compute cap >= 5.3");
     }
 
     #[cfg(feature = "bfloat")]
     if compute_cap < 80 {
-        panic("`bfloat` is only supported for CUDA compute cap >= 8.0");
+        panic!("`bfloat` is only supported for CUDA compute cap >= 8.0");
     }
 
     let builder = bindgen_cuda::Builder::default();
