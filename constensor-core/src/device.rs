@@ -25,9 +25,10 @@ pub struct Cuda<const ORD: usize>;
 #[cfg(feature = "cuda")]
 macro_rules! cuda_device {
     ($ord:expr) => {
-        use crate::cuda_backend::CudaDevice;
         impl Dev for Cuda<$ord> {
             fn resolve() -> Result<Device> {
+                use crate::cuda_backend::CudaDevice;
+
                 Ok(Device::Cuda(CudaDevice::new($ord)?))
             }
         }
