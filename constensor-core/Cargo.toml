@@ -18,5 +18,5 @@ half = { workspace = true, optional = true }
 [features]
 default = []
 cuda = ["cudarc", "dep:constensor-cuda-kernels"]
-half = ["dep:half"]
-bfloat = ["dep:half"]
+half = ["dep:half", "constensor-cuda-kernels/half"]
+bfloat = ["dep:half", "constensor-cuda-kernels/bfloat"]
