@@ -5,15 +5,15 @@ pub enum Error {}
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
-    #[cfg(any(feature = "half", feature = "bfloat"))]
+    #[cfg(any(feature = "cuda_half", feature = "cuda_bfloat"))]
     let compute_cap = compute_cap().unwrap();
-    
-    #[cfg(feature = "half")]
+
+    #[cfg(feature = "cuda_half")]
     if compute_cap < 53 {
         panic!("`half` is only supported for CUDA compute cap >= 5.3");
     }
 
-    #[cfg(feature = "bfloat")]
+    #[cfg(feature = "cuda_bfloat")]
     if compute_cap < 80 {
         panic!("`bfloat` is only supported for CUDA compute cap >= 8.0");
     }
@@ -23,12 +23,13 @@ fn main() {
     let builder = builder.arg("-DHALF");
     #[cfg(feature = "bfloat")]
     let builder = builder.arg("-DBFLOAT");
-    
+
     println!("cargo:info={builder:?}");
     let bindings = builder.build_ptx().unwrap();
     bindings.write("src/lib.rs").unwrap();
 }
 
+#[cfg(any(feature = "cuda_half", feature = "cuda_bfloat"))]
 fn compute_cap() -> Result<usize, Error> {
     println!("cargo:rerun-if-env-changed=CUDA_COMPUTE_CAP");
 
