@@ -16,8 +16,7 @@ pub struct Tensor_<S: Shape, T: DType, D: Dev> {
 }
 
 /// Tensors are n dimensional arrays. Only functions which allocate, copy
-/// data, or do operations return `Result`s, so applying functions does not
-/// return a result and instead builds up the graph.
+/// data, or do operations return `Result`s.
 #[derive(Clone)]
 pub struct Tensor<S: Shape, T: DType, D: Dev>(Arc<Tensor_<S, T, D>>);
 
@@ -39,22 +38,33 @@ fn from_storage<S: Shape, T: DType, D: Dev>(storage: Arc<Storage<T>>) -> Tensor<
 macro_rules! tensor_api {
     ($device:ty) => {
         impl<S: Shape, T: DType> Tensor<S, T, $device> {
+            /// Materialize a tensor filled with some value.
             pub fn full(v: T) -> Result<Self> {
                 let device = <$device>::resolve()?;
                 Ok(from_storage(Arc::new(device.const_impl::<T, S>(v)?)))
             }
+
+            /// Materialize a tensor filled with zeros.
             pub fn zeros() -> Result<Self> {
                 Self::full(T::ZERO)
             }
+
+            /// Materialize a tensor filled with ones.
             pub fn ones() -> Result<Self> {
                 Self::full(T::ONE)
             }
+
+            /// Create a tensor filled with zeros with the same shape, dtype, and device as `self`.
             pub fn zeros_like(&self) -> Result<Self> {
                 Tensor::<S, T, $device>::zeros()
             }
+
+            /// Create a tensor filled with ones with the same shape, dtype, and device as `self`.
             pub fn ones_like(&self) -> Result<Self> {
                 Tensor::<S, T, $device>::ones()
             }
+
+            /// Create a tensor filled with some value with the same shape, dtype, and device as `self`.
             pub fn full_like(&self, v: T) -> Result<Self> {
                 Tensor::<S, T, $device>::full(v)
             }
