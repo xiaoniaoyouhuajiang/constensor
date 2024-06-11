@@ -1,14 +1,14 @@
 use std::{
     marker::PhantomData,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Sub},
     sync::{Arc, RwLock, RwLockReadGuard},
 };
 
 use crate::{
     device::Dev,
-    graph::{BinaryOpType, Graph, GraphTensorId, Op},
+    graph::{BinaryOpType, Graph, GraphTensorId, Op, UnaryOpType},
     tensor::from_storage,
-    DType, Result, Shape, Tensor, R1,
+    DType, Result, Shape, SignedDType, Tensor, R1,
 };
 
 /// A tensor representing an intermediary result of a graph. Performing operations
@@ -56,6 +56,19 @@ impl<S: Shape, T: DType, D: Dev> GraphTensor<S, T, D> {
     }
 
     /// Convert this `GraphTensor` into a concrete `Tensor`.
+    /// Only unsigned operations.
+    pub fn to_tensor_unsigned(self) -> Result<Tensor<S, T, D>> {
+        let graph = self.graph.read().unwrap();
+        let nodes = &*graph.get_ops();
+
+        let device = D::resolve()?;
+        let storage = device.compile_and_run_graph_unsigned::<T, S>(nodes)?;
+        Ok(from_storage(Arc::new(storage)))
+    }
+}
+
+impl<S: Shape, T: DType + SignedDType, D: Dev> GraphTensor<S, T, D> {
+    /// Convert this `GraphTensor` into a concrete `Tensor`.
     pub fn to_tensor(self) -> Result<Tensor<S, T, D>> {
         let graph = self.graph.read().unwrap();
         let nodes = &*graph.get_ops();
@@ -83,7 +96,7 @@ macro_rules! graphtensor_binop {
     ($trait:ident, $fn_name:ident) => {
         impl<S: Shape, T: DType, D: Dev> $trait for GraphTensor<S, T, D> {
             type Output = GraphTensor<S, T, D>;
-            /// Add an elementwise addition operation to the graph.
+            /// Add an elementwise operation to the graph.
             fn $fn_name(self, rhs: Self) -> Self::Output {
                 self.graph.write().unwrap().add_op(Op::BinaryOp {
                     l_id: self.id(),
@@ -104,3 +117,19 @@ graphtensor_binop!(Add, add);
 graphtensor_binop!(Div, div);
 graphtensor_binop!(Mul, mul);
 graphtensor_binop!(Sub, sub);
+
+impl<S: Shape, T: DType + Neg<Output = T>, D: Dev> Neg for GraphTensor<S, T, D> {
+    type Output = GraphTensor<S, T, D>;
+    /// Add an elementwise addition operation to the graph.
+    fn neg(self) -> Self::Output {
+        self.graph.write().unwrap().add_op(Op::UnaryOp {
+            v_id: self.id(),
+            operator: UnaryOpType::Neg,
+        });
+        Self {
+            id: self.graph.write().unwrap().next_id(),
+            graph: self.graph.clone(),
+            _ghost: PhantomData,
+        }
+    }
+}
