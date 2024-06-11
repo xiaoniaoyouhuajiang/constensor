@@ -25,6 +25,8 @@ impl<T: DType> Graph<T> {
     pub(crate) fn add_op(&self, op: Op<T>) {
         self.data.write().unwrap().push(op);
     }
+
+    #[must_use]
     pub(crate) fn next_id(&mut self) -> GraphTensorId {
         let next = GraphTensorId(*self.id.read().unwrap());
         *self.id.write().unwrap() += 1;
@@ -32,15 +34,47 @@ impl<T: DType> Graph<T> {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
+pub enum BinaryOpType {
+    Add,
+    Div,
+    Sub,
+    Mul,
+}
+
+impl BinaryOpType {
+    pub fn to_c_op(&self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Div => "/",
+            Self::Sub => "-",
+            Self::Mul => "*",
+        }
+    }
+
+    pub fn to_closure<T: DType>(&self) -> impl Fn(T, T) -> T {
+        match self {
+            Self::Add => |x, y| x + y,
+            Self::Div => |x, y| x / y,
+            Self::Sub => |x, y| x - y,
+            Self::Mul => |x, y| x * y,
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub enum Op<T: DType> {
     Fill {
         v: T,
-        id: GraphTensorId,
     },
-    Add {
+    Arange {
+        start: T,
+        step: T,
+    },
+    BinaryOp {
         l_id: GraphTensorId,
         r_id: GraphTensorId,
+        operator: BinaryOpType,
     },
 }
 

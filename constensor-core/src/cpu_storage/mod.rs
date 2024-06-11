@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use crate::{
-    storage::{BackendDevice, BackendStorage, Offsetable},
-    DType, Result,
+    storage::{BackendDevice, BackendStorage},
+    DType, Op, Result, Shape,
 };
 
 pub struct CpuDevice;
@@ -17,22 +17,45 @@ impl<T: DType> BackendStorage<T> for CpuStorage<T> {
     }
 }
 
+fn evaluate_node<T: DType, S: Shape>(op: &Op<T>, graph: &[Op<T>]) -> Vec<T> {
+    match op {
+        Op::BinaryOp {
+            l_id,
+            r_id,
+            operator,
+        } => {
+            let l_name = evaluate_node::<T, S>(&graph[**l_id], graph);
+            let r_name = evaluate_node::<T, S>(&graph[**r_id], graph);
+            let mut out = vec![T::ZERO; l_name.len()];
+            let op = operator.to_closure();
+            for (i, (x, y)) in l_name.iter().zip(r_name).enumerate() {
+                out[i] = op(*x, y);
+            }
+            out
+        }
+        Op::Fill { v } => {
+            vec![*v; S::element_count()]
+        }
+        Op::Arange { start, step } => {
+            let mut accum = Vec::with_capacity(S::element_count());
+            for i in 0..S::element_count() {
+                accum.push(T::offset(i, *start, *step));
+            }
+            accum
+        }
+    }
+}
+
 impl BackendDevice for CpuDevice {
     type Storage<X: DType> = CpuStorage<X>;
 
-    fn const_impl<S: crate::Shape, T: DType>(&self, v: T) -> Result<Self::Storage<T>> {
-        Ok(CpuStorage(vec![v; S::element_count()]))
-    }
-
-    fn arange_impl<S: crate::Shape, O: Offsetable>(
+    fn compile_and_run_graph<S: Shape, T: DType>(
         &self,
-        start: O,
-        step: O,
-    ) -> Result<Self::Storage<O>> {
-        let mut accum = Vec::with_capacity(S::element_count());
-        for i in 0..S::element_count() {
-            accum.push(O::offset(i, start, step));
-        }
-        Ok(CpuStorage(accum))
+        graph: &[Op<T>],
+    ) -> Result<Self::Storage<T>> {
+        Ok(CpuStorage(evaluate_node::<T, S>(
+            graph.last().unwrap(),
+            graph,
+        )))
     }
 }
