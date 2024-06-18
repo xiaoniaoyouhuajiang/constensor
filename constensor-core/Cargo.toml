@@ -20,6 +20,7 @@ all = ["cuda", "half", "bfloat"]
 cuda = ["cudarc"]
 half = ["dep:half"]
 bfloat = ["dep:half"]
+slow_integral_fma_cuda = []
 
 [[example]]
 name = "hello_world"

@@ -151,6 +151,16 @@ fn handle_node<T: DType>(
                 &graph[<&GraphTensorId as Into<usize>>::into(c_id)],
                 graph,
             );
+            #[cfg(feature = "slow_integral_fma_cuda")]
+            if T::INTEGRAL {
+                use crate::graph::BinaryOpType;
+                let mul_op = BinaryOpType::Mul.to_c_op();
+                let add_op = BinaryOpType::Add.to_c_op();
+                format!("({a_name} {mul_op} {b_name} {add_op} {c_name})")
+            } else {
+                format!("( static_cast<T>(fma(static_cast<double>({a_name}), static_cast<double>({b_name}), static_cast<double>({c_name}))))")
+            }
+            #[cfg(not(feature = "slow_integral_fma_cuda"))]
             format!("( static_cast<T>(fma(static_cast<double>({a_name}), static_cast<double>({b_name}), static_cast<double>({c_name}))))")
         }
         Op::NoOp => unreachable!("no-op ops should never be reached."),
