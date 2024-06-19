@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use crate::{
     graph::{BinaryOpType, GraphTensorId},
     storage::{BackendDevice, BackendStorage},
-    DType, Error, Op, Result, Shape, SignedDType,
+    DType, Op, Result, Shape, SignedDType,
 };
 
 pub struct CpuDevice;
@@ -81,7 +81,7 @@ fn evaluate_node_signed<T: DType + SignedDType, S: Shape>(
             )?;
             let op = operator.to_closure();
             for x in v.iter_mut() {
-                *x = op(*x).ok_or(Error::Msg("`sqrt` value was negative".to_string()))?;
+                *x = op(*x);
             }
             Ok(v)
         }
