@@ -107,7 +107,7 @@ fn handle_node<T: DType>(
                 &graph[<&GraphTensorId as Into<usize>>::into(r_id)],
                 graph,
             );
-            format!("({l_name} {} {r_name})", operator.to_c_op())
+            format!("({l_name} {} {r_name})", operator.as_c_op())
         }
         Op::UnaryOp { v_id, operator } => {
             let v_name = handle_node(
