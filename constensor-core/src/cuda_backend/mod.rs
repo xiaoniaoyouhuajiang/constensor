@@ -313,13 +313,4 @@ impl BackendDevice for CudaDevice {
         let body = handle_node(&mut 0, &mut header, nodes.last().unwrap(), nodes);
         self.run_graph::<S, T>(header, body)
     }
-
-    fn compile_and_run_graph_signed<S: crate::Shape, T: DType + SignedDType>(
-        &self,
-        nodes: &[crate::Op<T>],
-    ) -> Result<Self::Storage<T>> {
-        let mut header = "".to_string();
-        let body = handle_node(&mut 0, &mut header, nodes.last().unwrap(), nodes);
-        self.run_graph::<S, T>(header, body)
-    }
 }

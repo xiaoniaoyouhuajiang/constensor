@@ -3,7 +3,7 @@ use crate::cuda_backend::CudaDevice;
 use crate::{
     cpu_storage::CpuDevice,
     storage::{BackendDevice, Storage},
-    DType, Op, Result, Shape, SignedDType,
+    DType, Op, Result, Shape,
 };
 
 /// Marker trait for devices
@@ -72,21 +72,6 @@ impl Device {
             Self::Cuda(cuda) => Ok(Storage::Cuda(cuda.compile_and_run_graph::<S, T>(graph)?)),
             Self::Cpu => Ok(Storage::Cpu(
                 CpuDevice.compile_and_run_graph::<S, T>(graph)?,
-            )),
-        }
-    }
-
-    pub fn compile_and_run_graph_signed<T: DType + SignedDType, S: Shape>(
-        &self,
-        graph: &[Op<T>],
-    ) -> Result<Storage<T>> {
-        match self {
-            #[cfg(feature = "cuda")]
-            Self::Cuda(cuda) => Ok(Storage::Cuda(
-                cuda.compile_and_run_graph_signed::<S, T>(graph)?,
-            )),
-            Self::Cpu => Ok(Storage::Cpu(
-                CpuDevice.compile_and_run_graph_signed::<S, T>(graph)?,
             )),
         }
     }

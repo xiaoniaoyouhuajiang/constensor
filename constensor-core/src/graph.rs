@@ -3,7 +3,6 @@ use std::{
     env,
     fmt::Display,
     fs,
-    ops::Neg,
     path::Path,
     process::Command,
     rc::Rc,
@@ -280,9 +279,9 @@ impl UnaryOpType {
         }
     }
 
-    pub fn to_closure<T: DType + Neg<Output = T>>(&self) -> impl Fn(T) -> T {
+    pub fn to_closure<T: DType>(&self) -> impl Fn(T) -> T {
         match self {
-            Self::Neg => |x: T| -x,
+            Self::Neg => T::maybe_neg,
             Self::Sqrt => |x: T| x.sqrt(),
         }
     }

@@ -14,7 +14,7 @@ macro_rules! test_for_device_float {
             fn fill() {
                 let mut graph = Graph::empty();
                 let gt = GraphTensor::<R2<3, 4>, f32, $dev>::fill(&mut graph, 0.0);
-                let tensor = gt.to_tensor_signed().unwrap();
+                let tensor = gt.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![
@@ -33,7 +33,7 @@ macro_rules! test_for_device_float {
                 let z = GraphTensor::<R2<3, 4>, f32, $dev>::fill(&mut graph, 4.0);
                 let c = x + y;
                 let res = z / c;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![
@@ -50,7 +50,7 @@ macro_rules! test_for_device_float {
                 let x = GraphTensor::<R1<4>, f32, $dev>::fill(&mut graph, 1.0);
                 let y = GraphTensor::<R1<4>, f32, $dev>::arange(&mut graph, 0.0, 1.0);
                 let res = x + y;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(tensor.data().unwrap().to_vec(), vec![1.0, 1.25, 1.5, 1.75]);
             }
         }
@@ -69,7 +69,7 @@ macro_rules! test_for_device_int {
             fn fill() {
                 let mut graph = Graph::empty();
                 let gt = GraphTensor::<R2<3, 4>, i32, $dev>::fill(&mut graph, 0);
-                let tensor = gt.to_tensor_signed().unwrap();
+                let tensor = gt.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![[0, 0, 0, 0,], [0, 0, 0, 0,], [0, 0, 0, 0,],],
@@ -84,7 +84,7 @@ macro_rules! test_for_device_int {
                 let z = GraphTensor::<R2<3, 4>, i32, $dev>::fill(&mut graph, 4);
                 let c = x + y;
                 let res = z / c;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![[1, 1, 1, 1,], [1, 1, 1, 1,], [1, 1, 1, 1,],],
@@ -97,7 +97,7 @@ macro_rules! test_for_device_int {
                 let x = GraphTensor::<R1<4>, i32, $dev>::fill(&mut graph, 1);
                 let y = GraphTensor::<R1<4>, i32, $dev>::arange(&mut graph, 0, 4);
                 let res = x + y;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(tensor.data().unwrap().to_vec(), vec![1, 2, 3, 4]);
             }
         }
@@ -118,7 +118,7 @@ macro_rules! test_for_device_half {
                 let mut graph = Graph::empty();
                 let gt =
                     GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f64_const(0.0));
-                let tensor = gt.to_tensor_signed().unwrap();
+                let tensor = gt.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![vec![f16::from_f64_const(0.0); 4]; 3],
@@ -136,7 +136,7 @@ macro_rules! test_for_device_half {
                     GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f64_const(4.0));
                 let c = x + y;
                 let res = z / c;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![vec![f16::from_f64_const(1.3330078); 4]; 3],
@@ -153,7 +153,7 @@ macro_rules! test_for_device_half {
                     f16::from_f64_const(1.0),
                 );
                 let res = x + y;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![
@@ -185,7 +185,7 @@ macro_rules! test_for_device_bfloat {
                     &mut graph,
                     bf16::from_f64_const(0.0),
                 );
-                let tensor = gt.to_tensor_signed().unwrap();
+                let tensor = gt.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![vec![bf16::from_f64_const(0.0); 4]; 3],
@@ -209,7 +209,7 @@ macro_rules! test_for_device_bfloat {
                 );
                 let c = x + y;
                 let res = z / c;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![vec![bf16::from_f64_const(1.3330078); 4]; 3],
@@ -227,7 +227,7 @@ macro_rules! test_for_device_bfloat {
                     bf16::from_f64_const(1.0),
                 );
                 let res = x + y;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
                     vec![
@@ -260,7 +260,7 @@ macro_rules! test_for_device_float_unary {
                 let z = GraphTensor::<R2<3, 4>, f32, $dev>::fill(&mut graph, 4.0);
                 let c = x + -y;
                 let res = z / c;
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(tensor.data().unwrap().to_vec(), vec![vec![-4.0; 4]; 3],);
             }
         }
@@ -281,7 +281,7 @@ macro_rules! test_for_device_sqrt {
                 let mut graph = Graph::empty();
                 let x = GraphTensor::<R2<3, 4>, f32, $dev>::fill(&mut graph, 4.0);
                 let res = x.sqrt();
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(tensor.data().unwrap().to_vec(), vec![vec![2.0; 4]; 3],);
             }
 
@@ -290,7 +290,7 @@ macro_rules! test_for_device_sqrt {
                 let mut graph = Graph::empty();
                 let x = GraphTensor::<R2<3, 4>, i32, $dev>::fill(&mut graph, 5);
                 let res = x.sqrt();
-                let tensor = res.to_tensor_signed().unwrap();
+                let tensor = res.to_tensor().unwrap();
                 assert_eq!(tensor.data().unwrap().to_vec(), vec![vec![2; 4]; 3],);
             }
         }
