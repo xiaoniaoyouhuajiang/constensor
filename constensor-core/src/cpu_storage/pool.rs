@@ -9,11 +9,24 @@ const MAX_BUFFERS_SIZE: usize = 4 * 1024 * 1024 * 1024;
 /// When total pooled bytes exceed this, trim largest buffers down to this level.
 const TRIM_THRESHOLD: usize = MAX_BUFFERS_SIZE / 2;
 
-/// A simple buffer pool to reuse Vec allocations across recursive graph evaluation.
+/// Tracks pool usage statistics.
+#[derive(Debug, Clone)]
+pub struct PoolMetrics {
+    /// Current total capacity of all pooled buffers, in bytes.
+    pub current_size: usize,
+    /// Number of times a buffer was reused instead of allocated.
+    pub hits: usize,
+    /// Number of times a new buffer was allocated.
+    pub misses: usize,
+    /// Number of times a buffer was dropped due to pool size cap.
+    pub drops: usize,
+}
+
+/// A simple buffer pool to reuse Vec allocations across graph evaluation.
 pub struct BufferPool<T> {
     pool: Vec<Vec<T>>,
-    /// Current total capacity of all pooled buffers, in bytes.
-    current_size: usize,
+    /// Usage statistics for this pool.
+    pub metrics: PoolMetrics,
 }
 
 /// Shared reference to a BufferPool for automatic recycling.
@@ -68,7 +81,12 @@ impl<T: DType> BufferPool<T> {
     pub fn new() -> Self {
         BufferPool {
             pool: Vec::new(),
-            current_size: 0,
+            metrics: PoolMetrics {
+                current_size: 0,
+                hits: 0,
+                misses: 0,
+                drops: 0,
+            },
         }
     }
 
@@ -87,17 +105,20 @@ impl<T: DType> BufferPool<T> {
             }
         }
 
-        if let Some(smallest_found_buf) = smallest_found_buf {
-            let mut buf = self.pool.swap_remove(smallest_found_buf);
+        if let Some(idx) = smallest_found_buf {
+            // record a reuse hit
+            self.metrics.hits += 1;
+            let mut buf = self.pool.swap_remove(idx);
             let buf_capacity = buf.capacity();
-            self.current_size = self
+            self.metrics.current_size = self
+                .metrics
                 .current_size
                 .saturating_sub(buf_capacity * mem::size_of::<T>());
             buf.clear();
             buf.reserve(capacity);
 
             debug_assert_eq!(
-                self.current_size,
+                self.metrics.current_size,
                 self.pool
                     .iter()
                     .map(|b| b.capacity() * size_of::<T>())
@@ -106,6 +127,8 @@ impl<T: DType> BufferPool<T> {
 
             buf
         } else {
+            // record an allocation miss
+            self.metrics.misses += 1;
             Vec::with_capacity(capacity)
         }
     }
@@ -113,11 +136,11 @@ impl<T: DType> BufferPool<T> {
     /// Return a Vec back into the pool for reuse.
     pub fn recycle_buffer(&mut self, buf: Vec<T>) {
         let buffer_bytes = buf.capacity() * mem::size_of::<T>();
-        if self.current_size + buffer_bytes <= MAX_BUFFERS_SIZE {
-            self.current_size += buffer_bytes;
+        if self.metrics.current_size + buffer_bytes <= MAX_BUFFERS_SIZE {
+            self.metrics.current_size += buffer_bytes;
             self.pool.push(buf);
             debug_assert_eq!(
-                self.current_size,
+                self.metrics.current_size,
                 self.pool
                     .iter()
                     .map(|b| b.capacity() * size_of::<T>())
@@ -125,13 +148,16 @@ impl<T: DType> BufferPool<T> {
             );
 
             self.trim_excess();
+        } else {
+            // record a dropped buffer due to cap
+            self.metrics.drops += 1;
         }
         // Otherwise drop buf and do not grow the pool further
     }
 
     /// Remove largest buffers until total pooled bytes ≤ TRIM_THRESHOLD.
     fn trim_excess(&mut self) {
-        while self.current_size > TRIM_THRESHOLD {
+        while self.metrics.current_size > TRIM_THRESHOLD {
             // Find index of largest buffer by byte capacity
             let mut max_idx = 0;
             let mut max_bytes = 0;
@@ -144,15 +170,21 @@ impl<T: DType> BufferPool<T> {
             }
             // Remove and drop that buffer
             self.pool.swap_remove(max_idx);
-            self.current_size = self.current_size.saturating_sub(max_bytes);
+            self.metrics.current_size = self.metrics.current_size.saturating_sub(max_bytes);
         }
 
         debug_assert_eq!(
-            self.current_size,
+            self.metrics.current_size,
             self.pool
                 .iter()
                 .map(|b| b.capacity() * size_of::<T>())
                 .sum()
         );
+    }
+
+    /// Returns a snapshot of current pool metrics.
+    #[allow(unused)]
+    pub fn metrics(&self) -> PoolMetrics {
+        self.metrics.clone()
     }
 }
