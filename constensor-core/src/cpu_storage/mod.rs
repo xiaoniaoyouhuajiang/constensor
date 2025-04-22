@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pool::{BufferPool, PooledBuffer};
-use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 use crate::{
     graph::GraphTensorId,
@@ -86,23 +86,19 @@ impl BackendDevice for CpuDevice {
                     } => {
                         let l_idx = <&GraphTensorId as Into<usize>>::into(l_id);
                         let r_idx = <&GraphTensorId as Into<usize>>::into(r_id);
-                        let l_buf = results[l_idx].take().unwrap();
-                        let r_buf = results[r_idx].take().unwrap();
-                        let mut out_buf = PooledBuffer::new(
-                            pool.borrow_mut().get_buffer(S::element_count()),
-                            pool.clone(),
-                        );
-                        out_buf.extend_from_slice(&l_buf);
-                        T::binary_simd_op(&mut out_buf, r_buf.into_inner(), *operator);
-                        out_buf
+                        let l_buf = results[l_idx].as_ref().unwrap();
+                        let r_buf = results[r_idx].as_ref().unwrap();
+                        let mut out = pool.borrow_mut().get_buffer(S::element_count());
+                        T::binary_simd_op(&*l_buf, &*r_buf, &mut out, *operator);
+                        PooledBuffer::new(out, pool.clone())
                     }
                     Op::Fill { v } => {
-                        let mut buf = pool.borrow_mut().get_buffer(S::element_count());
+                        let mut buf = pool.borrow_mut().get_empty_buffer(S::element_count());
                         buf.extend(std::iter::repeat_n(*v, S::element_count()));
                         PooledBuffer::new(buf, pool.clone())
                     }
                     Op::Arange { start, step, stop } => {
-                        let mut buf = pool.borrow_mut().get_buffer(S::element_count());
+                        let mut buf = pool.borrow_mut().get_empty_buffer(S::element_count());
                         let mut x = start.to_f64();
                         while x < stop.to_f64() {
                             buf.push(T::from_f64(x));
@@ -112,20 +108,25 @@ impl BackendDevice for CpuDevice {
                     }
                     Op::UnaryOp { v_id, operator } => {
                         let v_idx = <&GraphTensorId as Into<usize>>::into(v_id);
-                        let mut buf = results[v_idx].take().unwrap();
+                        let buf = results[v_idx].as_ref().unwrap();
                         let op_fn = operator.to_closure();
-                        buf.par_iter_mut().for_each(|x| *x = op_fn(*x));
-                        buf
+                        let mut out = pool.borrow_mut().get_buffer(S::element_count());
+                        out.par_iter_mut()
+                            .zip(&**buf)
+                            .for_each(|(out, x): (&mut T, &T)| *out = op_fn(*x));
+                        PooledBuffer::new(out, pool.clone())
                     }
                     Op::FusedMulAdd { a_id, b_id, c_id } => {
                         let a_idx = <&GraphTensorId as Into<usize>>::into(a_id);
                         let b_idx = <&GraphTensorId as Into<usize>>::into(b_id);
                         let c_idx = <&GraphTensorId as Into<usize>>::into(c_id);
-                        let mut buf = results[a_idx].take().unwrap();
-                        let b_buf = results[b_idx].take().unwrap();
-                        let c_buf = results[c_idx].take().unwrap();
-                        T::fma_op(&mut *buf, b_buf.into_inner(), c_buf.into_inner());
-                        buf
+                        let a_buf = results[a_idx].as_ref().unwrap();
+                        let b_buf = results[b_idx].as_ref().unwrap();
+                        let c_buf = results[c_idx].as_ref().unwrap();
+
+                        let mut out = pool.borrow_mut().get_buffer(S::element_count());
+                        T::fma_op(a_buf, b_buf, c_buf, &mut out);
+                        PooledBuffer::new(out, pool.clone())
                     }
                     Op::NoOp => unreachable!("NoOp should not be evaluated."),
                 };

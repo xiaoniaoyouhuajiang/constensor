@@ -226,22 +226,22 @@ pub trait SimdSupported {
     // In bytes, this is also the lane count in bytes
     const BLOCK_SIZE: usize = 8;
 
-    fn binary_simd_op(lhs: &mut Vec<Self>, rhs: Vec<Self>, op: BinaryOpType)
+    fn binary_simd_op(a: &[Self], b: &[Self], out: &mut Vec<Self>, op: BinaryOpType)
     where
         Self: Sized;
 
-    fn fma_op(lhs: &mut Vec<Self>, a: Vec<Self>, b: Vec<Self>)
+    fn fma_op(a: &[Self], b: &[Self], c: &[Self], out: &mut Vec<Self>)
     where
         Self: Sized;
 }
 
 macro_rules! simd_supported {
     ($t:ident BINARY_INTERNAL) => {
-        fn binary_simd_op(lhs: &mut Vec<Self>, rhs: Vec<Self>, op: BinaryOpType)
+        fn binary_simd_op(a: &[Self], b: &[Self], out: &mut Vec<Self>, op: BinaryOpType)
         where
             Self: Sized,
         {
-            let len = lhs.len();
+            let len = a.len();
             let n_blocks = len / Self::BLOCK_SIZE;
 
             // Define SIMD and scalar operations based on the chosen operation
@@ -266,14 +266,14 @@ macro_rules! simd_supported {
             // Vectorized loop
             for i in 0..n_blocks {
                 let off = i * Self::BLOCK_SIZE;
-                let l_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&lhs[off..off + Self::BLOCK_SIZE]);
-                let r_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&rhs[off..off + Self::BLOCK_SIZE]);
+                let l_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                let r_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
                 let res = simd_op(l_chunk, r_chunk);
-                lhs[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                out[off..(off + Self::BLOCK_SIZE).min(len)].copy_from_slice(res.as_array());
             }
             // Scalar fallback for remainder
             for i in n_blocks * Self::BLOCK_SIZE..len {
-                lhs[i] = scalar_op(lhs[i], rhs[i]);
+                out[i] = scalar_op(a[i], b[i]);
             }
         }
     };
@@ -282,24 +282,24 @@ macro_rules! simd_supported {
         impl SimdSupported for $t {
             simd_supported!($t BINARY_INTERNAL);
 
-            fn fma_op(lhs: &mut Vec<Self>, a: Vec<Self>, b: Vec<Self>)
+            fn fma_op(a: &[Self], b: &[Self], c: &[Self], out: &mut Vec<Self>)
             where
                 Self: Sized,
             {
-                let len = lhs.len();
+                let len = a.len();
                 let n_blocks = len / Self::BLOCK_SIZE;
 
                 use std::simd::StdFloat;
                 for i in 0..n_blocks {
                     let off = i * Self::BLOCK_SIZE;
-                    let l = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&lhs[off..off + Self::BLOCK_SIZE]);
-                    let aa = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
-                    let bb = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
-                    let res = l.mul_add(aa, bb);
-                    lhs[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                    let a = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let b = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let c = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&c[off..off + Self::BLOCK_SIZE]);
+                    let res = a.mul_add(b, c);
+                    out[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
                 }
                 for i in n_blocks * Self::BLOCK_SIZE..len {
-                    lhs[i] = lhs[i].mul_add(a[i], b[i]);
+                    out[i] = a[i].mul_add(b[i], c[i]);
                 }
             }
         }
@@ -308,54 +308,54 @@ macro_rules! simd_supported {
         impl SimdSupported for $t {
             simd_supported!($t BINARY_INTERNAL);
 
-            fn fma_op(lhs: &mut Vec<Self>, a: Vec<Self>, b: Vec<Self>)
+            fn fma_op(a: &[Self], b: &[Self], c: &[Self], out: &mut Vec<Self>)
             where
                 Self: Sized,
             {
-                let len = lhs.len();
+                let len = a.len();
                 let n_blocks = len / Self::BLOCK_SIZE;
 
                 for i in 0..n_blocks {
                     let off = i * Self::BLOCK_SIZE;
-                    let l = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&lhs[off..off + Self::BLOCK_SIZE]);
-                    let aa = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
-                    let bb = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
-                    let res = l * aa + bb;
-                    lhs[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                    let a = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let b = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let c = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&c[off..off + Self::BLOCK_SIZE]);
+                    let res = a * b + c;
+                    out[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
                 }
                 for i in n_blocks * Self::BLOCK_SIZE..len {
-                    lhs[i] = lhs[i] * a[i] + b[i];
+                    out[i] = a[i] * b[i] + c[i];
                 }
             }
         }
     };
     ($t:ident NOSIMD) => {
         impl SimdSupported for $t {
-            fn binary_simd_op(lhs: &mut Vec<Self>, rhs: Vec<Self>, op: BinaryOpType)
+            fn binary_simd_op(a: &[Self], b: &[Self], out: &mut Vec<Self>, op: BinaryOpType)
             where
                 Self: Sized,
             {
-                *lhs = lhs
-                    .into_iter()
-                    .zip(rhs)
-                    .map(|(lhs, rhs)| match op {
+                use rayon::prelude::*;
+
+                out.par_iter_mut()
+                    .zip(a.par_iter().zip(b))
+                    .for_each(|(out, (lhs, rhs))| *out = match op {
                         BinaryOpType::Add => *lhs + rhs,
                         BinaryOpType::Mul => *lhs * rhs,
                         BinaryOpType::Sub => *lhs - rhs,
                         BinaryOpType::Div => *lhs / rhs,
-                    })
-                    .collect::<Vec<_>>();
+                    });
             }
 
-            fn fma_op(lhs: &mut Vec<Self>, a: Vec<Self>, b: Vec<Self>)
+            fn fma_op(a: &[Self], b: &[Self], c: &[Self], out: &mut Vec<Self>)
             where
                 Self: Sized,
             {
-                *lhs = lhs
-                    .into_iter()
-                    .zip(a.into_iter().zip(b))
-                    .map(|(lhs, (a, b))| *lhs * a + b)
-                    .collect::<Vec<_>>();
+                use rayon::prelude::*;
+
+                out.par_iter_mut()
+                    .zip(a.par_iter().zip(b.par_iter().zip(c)))
+                    .for_each(|(out, (a, (b, c)))| *out = *a * *b + *c);
             }
         }
     };

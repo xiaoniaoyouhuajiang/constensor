@@ -91,7 +91,9 @@ impl<T: DType> BufferPool<T> {
     }
 
     /// Grab a Vec with at least `capacity`. Clears and reuses one from the pool if available.
-    pub fn get_buffer(&mut self, capacity: usize) -> Vec<T> {
+    ///
+    /// Returns an uninitialized vector with capacity and len of `capacity`.
+    pub fn get_empty_buffer(&mut self, capacity: usize) -> Vec<T> {
         // Find the smallest buf that can fit this capacity.
         let mut smallest_found_buf = None;
         for i in 0..self.pool.len() {
@@ -131,6 +133,17 @@ impl<T: DType> BufferPool<T> {
             self.metrics.misses += 1;
             Vec::with_capacity(capacity)
         }
+    }
+
+    /// Grab a Vec with at least `capacity`. Clears and reuses one from the pool if available.
+    ///
+    /// Returns an uninitialized vector with capacity of `capacity` and len of 0.
+    pub fn get_buffer(&mut self, capacity: usize) -> Vec<T> {
+        let mut buf = self.get_empty_buffer(capacity);
+        unsafe {
+            buf.set_len(capacity);
+        }
+        buf
     }
 
     /// Return a Vec back into the pool for reuse.
