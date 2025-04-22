@@ -225,7 +225,12 @@ impl<T: DType> Graph<T> {
             }
         }
 
-        *self.data.write().unwrap() = new_ops;
+        // Remove any NoOp entries before storing back to the graph
+        let filtered_ops = new_ops
+            .into_iter()
+            .filter(|op| !matches!(op, Op::NoOp))
+            .collect::<Vec<_>>();
+        *self.data.write().unwrap() = filtered_ops;
     }
 
     /// Optimize this graph.
