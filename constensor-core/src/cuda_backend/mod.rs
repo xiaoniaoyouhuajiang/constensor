@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::OnceCell,
     fs,
     hash::{DefaultHasher, Hash, Hasher},
     ops::Deref,
@@ -8,10 +9,10 @@ use std::{
 };
 mod error;
 use cudarc::{
-    driver::{CudaFunction, CudaSlice, LaunchAsync, LaunchConfig},
+    driver::{CudaFunction, CudaModule, CudaSlice, LaunchConfig, PushKernelArg},
     nvrtc::{CompileOptions, Ptx},
 };
-use error::{CudaError, WrapErr};
+use error::WrapErr;
 
 use crate::{
     cpu_storage::CpuStorage,
@@ -22,43 +23,39 @@ use crate::{
 
 #[derive(Clone)]
 pub struct CudaDevice {
-    device: Arc<cudarc::driver::CudaDevice>,
+    context: Arc<cudarc::driver::CudaContext>,
+    stream: Arc<cudarc::driver::CudaStream>,
+    module: OnceCell<Arc<CudaModule>>,
 }
 
 impl CudaDevice {
     pub(crate) fn new(ordinal: usize) -> Result<Self> {
+        let context = cudarc::driver::CudaContext::new(ordinal).w()?;
+        let stream = context.new_stream().w()?;
         Ok(Self {
-            device: cudarc::driver::CudaDevice::new(ordinal).w()?,
+            context,
+            stream,
+            module: OnceCell::new(),
         })
     }
 
-    pub(crate) fn get_or_load_func(&self, module_name: &str, ptx: Ptx) -> Result<CudaFunction> {
-        if !self.has_func(module_name, module_name) {
-            // Leaking the string here is a bit sad but we need a &'static str and this is only
-            // done once per kernel name.
-            let static_module_name = Box::leak(module_name.to_string().into_boxed_str());
-            self.load_ptx(ptx, module_name, &[static_module_name])
-                .map_err(|cuda| CudaError::Load {
-                    cuda,
-                    module_name: module_name.to_string(),
-                })
-                .w()?;
-        }
-        self.get_func(module_name, module_name)
-            // Clippy recommends this `ok_or` rather than `ok_or_else` so hopefully the compiler is
-            // able to only build the error value if needed.
-            .ok_or(CudaError::MissingKernel {
-                module_name: module_name.to_string(),
-            })
-            .w()
+    pub(crate) fn stream(&self) -> Arc<cudarc::driver::CudaStream> {
+        self.stream.clone()
+    }
+
+    pub(crate) fn get_or_load_func(&self, function_name: &str, ptx: Ptx) -> Result<CudaFunction> {
+        let module = self
+            .module
+            .get_or_init(|| self.context.load_module(ptx).w().unwrap());
+        module.load_function(function_name).w()
     }
 }
 
 impl Deref for CudaDevice {
-    type Target = Arc<cudarc::driver::CudaDevice>;
+    type Target = Arc<cudarc::driver::CudaStream>;
 
     fn deref(&self) -> &Self::Target {
-        &self.device
+        &self.stream
     }
 }
 
@@ -69,7 +66,7 @@ pub struct CudaStorage<T: DType> {
 
 impl<T: DType> BackendStorage<T> for CudaStorage<T> {
     fn to_cpu_storage(&self) -> Result<Cow<CpuStorage<T>>> {
-        let data = self.device.dtoh_sync_copy(&self.slice).w()?;
+        let data = self.device.stream().memcpy_dtov(&self.slice).w()?;
         Ok(Cow::Owned(CpuStorage(data)))
     }
 }
@@ -124,7 +121,8 @@ fn handle_node<T: DType>(
             *header += &format!("T {} = {v:?};\n", name.to_name());
             format!("({})", name.to_name())
         }
-        Op::Arange { start, step } => {
+        Op::Arange { start, step, stop } => {
+            compile_error!("arange is not implemented for CUDA yet.");
             *current_name += 1;
             let name = Name(*current_name);
             *header += &format!(
@@ -226,7 +224,7 @@ impl CudaDevice {
         let mut hasher = DefaultHasher::new();
         body.hash(&mut hasher);
         header.hash(&mut hasher);
-        let module_name = format!("jit_kernel_{}_{}", hasher.finish(), T::NAME);
+        let function_name = format!("jit_kernel_{}_{}", hasher.finish(), T::NAME);
 
         let template_kernel = format!(
             r#"
@@ -236,7 +234,7 @@ impl CudaDevice {
             {}
 
             template <typename T>
-            __device__ void {module_name}_kernel(T *buf, const size_t numel) {{
+            __device__ void {function_name}_kernel(T *buf, const size_t numel) {{
                 for (unsigned int i = blockIdx.x * blockDim.x + threadIdx.x; i < numel;
                     i += blockDim.x * gridDim.x) {{
                     {header}
@@ -244,8 +242,8 @@ impl CudaDevice {
                 }}
             }}
             
-            extern "C" __global__ void {module_name}({} *buf, const size_t numel) {{
-                {module_name}_kernel(buf, numel);
+            extern "C" __global__ void {function_name}({} *buf, const size_t numel) {{
+                {function_name}_kernel(buf, numel);
             }}
 
             "#,
@@ -254,7 +252,10 @@ impl CudaDevice {
         );
 
         let ptx = if let Some(home) = dirs::home_dir() {
-            let path = format!("{}/.cache/constensor/ptx/{module_name}.ptx", home.display());
+            let path = format!(
+                "{}/.cache/constensor/ptx/{function_name}.ptx",
+                home.display()
+            );
             if Path::new(&path).exists() {
                 match fs::read_to_string(path) {
                     Ok(ptx) => Ptx::from_src(ptx),
@@ -269,7 +270,10 @@ impl CudaDevice {
 
         let ptx_str = ptx.to_src();
         if let Some(home) = dirs::home_dir() {
-            let path = format!("{}/.cache/constensor/ptx/{module_name}.ptx", home.display());
+            let path = format!(
+                "{}/.cache/constensor/ptx/{function_name}.ptx",
+                home.display()
+            );
             let path = Path::new(&path);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
@@ -278,13 +282,19 @@ impl CudaDevice {
         }
 
         let n_elems = S::element_count();
-        let data = unsafe { self.device.alloc::<T>(n_elems) }.w()?;
+        let stream = self.stream();
 
-        let func = self.get_or_load_func(&module_name, ptx)?;
+        let data = unsafe { stream.alloc::<T>(n_elems) }.w()?;
 
-        let params = (&data, n_elems);
+        let func = self.get_or_load_func(&function_name, ptx)?;
+
         let cfg = LaunchConfig::for_num_elems(n_elems as u32);
-        unsafe { func.launch(cfg, params) }.w()?;
+
+        let mut builder = stream.launch_builder(&func);
+        builder.arg(&data);
+        builder.arg(&n_elems);
+        unsafe { builder.launch(cfg).w()? };
+
         Ok(CudaStorage {
             slice: data,
             device: self.clone(),
