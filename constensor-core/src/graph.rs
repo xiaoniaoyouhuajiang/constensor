@@ -1,12 +1,19 @@
 use std::{
     cell::Cell,
+    env,
     fmt::Display,
+    fs,
     ops::Neg,
+    path::Path,
+    process::Command,
     rc::Rc,
     sync::{Arc, RwLock, RwLockReadGuard},
 };
 
-use crate::DType;
+use crate::{DType, Result};
+
+use petgraph::dot::{Config, Dot};
+use petgraph::Graph as PetGraph;
 
 #[derive(Clone)]
 pub struct Graph<T: DType> {
@@ -15,6 +22,7 @@ pub struct Graph<T: DType> {
 }
 
 impl<T: DType> Graph<T> {
+    /// Create an empty Graph
     pub fn empty() -> Self {
         Self {
             data: Arc::new(RwLock::new(Vec::new())),
@@ -22,19 +30,100 @@ impl<T: DType> Graph<T> {
         }
     }
 
+    /// Read-only access to the list of operations
     pub fn get_ops(&self) -> RwLockReadGuard<Vec<Op<T>>> {
         self.data.read().unwrap()
     }
 
+    /// Append an operation to the graph
     pub(crate) fn add_op(&self, op: Op<T>) {
         self.data.write().unwrap().push(op);
     }
 
+    /// Generate the next unique tensor ID
     #[must_use]
     pub(crate) fn next_id(&mut self) -> GraphTensorId {
         let next = GraphTensorId::from(*self.id.read().unwrap());
         *self.id.write().unwrap() += 1;
         next
+    }
+
+    /// Export this computational graph as a petgraph::Graph where nodes are operation labels.
+    pub fn to_petgraph(&self) -> PetGraph<String, ()> {
+        let ops = self.data.read().unwrap();
+        let mut g = PetGraph::<String, ()>::new();
+        let mut nodes = Vec::with_capacity(ops.len());
+        // Add nodes with labels
+        for op in ops.iter() {
+            let label = match op {
+                Op::Fill { v } => format!("Fill({:?})", v),
+                Op::Arange { start, step } => format!("Arange(start={:?}, step={:?})", start, step),
+                Op::BinaryOp { operator, .. } => format!("BinOp({})", operator.as_c_op()),
+                Op::UnaryOp { operator, .. } => format!("UnOp({:?})", operator),
+                Op::FusedMulAdd { .. } => "FMA".to_string(),
+                Op::NoOp => "NoOp".to_string(),
+            };
+            nodes.push(g.add_node(label));
+        }
+        // Add edges to represent data dependencies
+        for (i, op) in ops.iter().enumerate() {
+            let dst = nodes[i];
+            match op {
+                Op::BinaryOp { l_id, r_id, .. } => {
+                    let src_l = nodes[usize::from(l_id)];
+                    let src_r = nodes[usize::from(r_id)];
+                    g.add_edge(src_l, dst, ());
+                    g.add_edge(src_r, dst, ());
+                }
+                Op::UnaryOp { v_id, .. } => {
+                    let src = nodes[usize::from(v_id)];
+                    g.add_edge(src, dst, ());
+                }
+                Op::FusedMulAdd { a_id, b_id, c_id } => {
+                    let src_a = nodes[usize::from(a_id)];
+                    let src_b = nodes[usize::from(b_id)];
+                    let src_c = nodes[usize::from(c_id)];
+                    g.add_edge(src_a, dst, ());
+                    g.add_edge(src_b, dst, ());
+                    g.add_edge(src_c, dst, ());
+                }
+                _ => {}
+            }
+        }
+        g
+    }
+
+    /// Produce a DOT format string of this graph.
+    pub fn to_dot(&self) -> String {
+        let g = self.to_petgraph();
+        format!("{:?}", Dot::with_config(&g, &[Config::EdgeNoLabel]))
+    }
+
+    /// Visualize the graph by saving it to this file.
+    ///
+    /// Install graphvis:
+    /// - brew install graphviz
+    /// - apt install graphviz
+    pub fn visualize<P: AsRef<Path>>(&self, filename: P) -> Result<()> {
+        let path = filename.as_ref();
+        let tmp_dir = env::temp_dir();
+        let dot_path = tmp_dir.join("graph.dot");
+        let png_path = path.to_path_buf();
+
+        fs::write(&dot_path, self.to_dot())?;
+        let status = Command::new("dot")
+            .args(&[
+                "-Tpng",
+                &dot_path.display().to_string(),
+                "-o",
+                &png_path.display().to_string(),
+            ])
+            .status()?;
+        if !status.success() {
+            panic!("Graphviz failed");
+        }
+
+        Ok(())
     }
 
     /// Optimize by looking for mul-add pairs, convert to FMA
@@ -109,9 +198,11 @@ impl<T: DType> Graph<T> {
         *self.data.write().unwrap() = new_ops;
     }
 
+    /// Optimize this graph.
+    ///
     /// Apply the following optimizations
     /// - Fuse mul,add
-    pub(crate) fn optimize(&mut self) {
+    pub fn optimize(&mut self) {
         self.optimize_fma();
     }
 }
@@ -151,7 +242,6 @@ pub enum UnaryOpType {
 }
 
 impl UnaryOpType {
-    /// Can assume that the type T is available.
     pub fn fill_in_c_op(&self, val: impl Display) -> String {
         match self {
             Self::Neg => format!("-{val}"),
