@@ -8,10 +8,10 @@ macro_rules! test_for_device_fma {
             use super::*;
             #[test]
             fn float_fma() {
-                let graph = Graph::empty();
-                let a = GraphTensor::<R2<3, 4>, f32, $dev>::fill(graph.clone(), 2.0);
-                let b = GraphTensor::<R2<3, 4>, f32, $dev>::fill(graph.clone(), 3.0);
-                let c = GraphTensor::<R2<3, 4>, f32, $dev>::fill(graph.clone(), 4.0);
+                let mut graph = Graph::empty();
+                let a = GraphTensor::<R2<3, 4>, f32, $dev>::fill(&mut graph, 2.0);
+                let b = GraphTensor::<R2<3, 4>, f32, $dev>::fill(&mut graph, 3.0);
+                let c = GraphTensor::<R2<3, 4>, f32, $dev>::fill(&mut graph, 4.0);
                 let res = a * b + c;
                 let tensor = res.to_tensor_signed().unwrap();
                 assert_eq!(tensor.data().unwrap().to_vec(), vec![vec![10.0; 4]; 3],);
@@ -19,10 +19,10 @@ macro_rules! test_for_device_fma {
 
             #[test]
             fn integral_fma() {
-                let graph = Graph::empty();
-                let a = GraphTensor::<R2<3, 4>, i32, $dev>::fill(graph.clone(), 2);
-                let b = GraphTensor::<R2<3, 4>, i32, $dev>::fill(graph.clone(), 3);
-                let c = GraphTensor::<R2<3, 4>, i32, $dev>::fill(graph.clone(), 4);
+                let mut graph = Graph::empty();
+                let a = GraphTensor::<R2<3, 4>, i32, $dev>::fill(&mut graph, 2);
+                let b = GraphTensor::<R2<3, 4>, i32, $dev>::fill(&mut graph, 3);
+                let c = GraphTensor::<R2<3, 4>, i32, $dev>::fill(&mut graph, 4);
                 let res = a * b + c;
                 let tensor = res.to_tensor_signed().unwrap();
                 assert_eq!(tensor.data().unwrap().to_vec(), vec![vec![10; 4]; 3],);
@@ -40,19 +40,13 @@ macro_rules! test_for_device_half_fma {
             fn float_fma() {
                 use half::f16;
 
-                let graph = Graph::empty();
-                let a = GraphTensor::<R2<3, 4>, f16, $dev>::fill(
-                    graph.clone(),
-                    f16::from_f32_const(2.0),
-                );
-                let b = GraphTensor::<R2<3, 4>, f16, $dev>::fill(
-                    graph.clone(),
-                    f16::from_f32_const(3.0),
-                );
-                let c = GraphTensor::<R2<3, 4>, f16, $dev>::fill(
-                    graph.clone(),
-                    f16::from_f32_const(4.0),
-                );
+                let mut graph = Graph::empty();
+                let a =
+                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f32_const(2.0));
+                let b =
+                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f32_const(3.0));
+                let c =
+                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f32_const(4.0));
                 let res = a * b + c;
                 let tensor = res.to_tensor_signed().unwrap();
                 assert_eq!(
@@ -73,17 +67,17 @@ macro_rules! test_for_device_bfloat_fma {
             fn float_fma() {
                 use half::bf16;
 
-                let graph = Graph::empty();
+                let mut graph = Graph::empty();
                 let a = GraphTensor::<R2<3, 4>, bf16, $dev>::fill(
-                    graph.clone(),
+                    &mut graph,
                     bf16::from_f32_const(2.0),
                 );
                 let b = GraphTensor::<R2<3, 4>, bf16, $dev>::fill(
-                    graph.clone(),
+                    &mut graph,
                     bf16::from_f32_const(3.0),
                 );
                 let c = GraphTensor::<R2<3, 4>, bf16, $dev>::fill(
-                    graph.clone(),
+                    &mut graph,
                     bf16::from_f32_const(4.0),
                 );
                 let res = a * b + c;

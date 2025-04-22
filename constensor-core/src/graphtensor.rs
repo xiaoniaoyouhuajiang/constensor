@@ -23,25 +23,25 @@ pub struct GraphTensor<S: Shape, T: DType, D: Dev> {
 impl<S: Shape, T: DType, D: Dev> GraphTensor<S, T, D> {
     #[must_use]
     /// Create a tensor filled with some value.
-    pub fn fill(mut graph: Graph<T>, v: T) -> Self {
+    pub fn fill(graph: &mut Graph<T>, v: T) -> Self {
         let id = graph.next_id();
         graph.add_op(Op::Fill { v });
         Self {
             id,
-            graph: Arc::new(RwLock::new(graph)),
+            graph: Arc::new(RwLock::new(graph.clone())),
             _ghost: PhantomData,
         }
     }
 
     #[must_use]
     /// Create a tensor filled with zeros.
-    pub fn zeros(graph: Graph<T>) -> Self {
+    pub fn zeros(graph: &mut Graph<T>) -> Self {
         Self::fill(graph, T::ZERO)
     }
 
     #[must_use]
     /// Create a tensor filled with ones.
-    pub fn ones(graph: Graph<T>) -> Self {
+    pub fn ones(graph: &mut Graph<T>) -> Self {
         Self::fill(graph, T::ONE)
     }
 
@@ -98,12 +98,12 @@ impl<S: Shape, T: DType + SignedDType, D: Dev> GraphTensor<S, T, D> {
 impl<const A: usize, T: DType, D: Dev> GraphTensor<R1<A>, T, D> {
     #[must_use]
     /// A GraphTensor representing a vector ranging from `start` to `A` with step `step`.
-    pub fn arange(mut graph: Graph<T>, start: T, step: T) -> Self {
+    pub fn arange(graph: &mut Graph<T>, start: T, step: T) -> Self {
         let id = graph.next_id();
         graph.add_op(Op::Arange { start, step });
         Self {
             id,
-            graph: Arc::new(RwLock::new(graph)),
+            graph: Arc::new(RwLock::new(graph.clone())),
             _ghost: PhantomData,
         }
     }
