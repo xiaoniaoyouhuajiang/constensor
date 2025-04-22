@@ -113,7 +113,6 @@ macro_rules! graphtensor_binop {
     ($trait:ident, $fn_name:ident) => {
         impl<S: Shape, T: DType, D: Dev> $trait for GraphTensor<S, T, D> {
             type Output = GraphTensor<S, T, D>;
-            #[must_use]
             /// Add an elementwise operation to the graph.
             fn $fn_name(self, rhs: Self) -> Self::Output {
                 self.graph.write().unwrap().add_op(Op::BinaryOp {
@@ -138,7 +137,6 @@ graphtensor_binop!(Sub, sub);
 
 impl<S: Shape, T: DType + Neg<Output = T>, D: Dev> Neg for GraphTensor<S, T, D> {
     type Output = GraphTensor<S, T, D>;
-    #[must_use]
     /// Add an elementwise addition operation to the graph.
     fn neg(self) -> Self::Output {
         self.graph.write().unwrap().add_op(Op::UnaryOp {
