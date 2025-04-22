@@ -112,8 +112,8 @@ pub trait DType: Debug + DeviceRepr + Clone + DTypeOps + Send + Sync {
     const C_DEP: Option<&'static str>;
     const INTEGRAL: bool;
 
-    fn to_f64(&self) -> f32;
-    fn from_f64(x: f32) -> Self;
+    fn to_f64(&self) -> f64;
+    fn from_f64(x: f64) -> Self;
 }
 
 #[cfg(not(feature = "cuda"))]
@@ -168,6 +168,13 @@ impl DType for f16 {
     const C_NAME: &'static str = "__half";
     const C_DEP: Option<&'static str> = Some("#include \"cuda_fp16.h\"");
     const INTEGRAL: bool = false;
+
+    fn to_f64(&self) -> f64 {
+        self.to_f64_const()
+    }
+    fn from_f64(x: f64) -> Self {
+        Self::from_f64_const(x)
+    }
 }
 #[cfg(feature = "bfloat")]
 impl DTypeOps for bf16 {}
@@ -179,6 +186,13 @@ impl DType for bf16 {
     const C_NAME: &'static str = "__nv_bfloat16";
     const C_DEP: Option<&'static str> = Some("#include \"cuda_bf16.h\"");
     const INTEGRAL: bool = false;
+
+    fn to_f64(&self) -> f64 {
+        self.to_f64_const()
+    }
+    fn from_f64(x: f64) -> Self {
+        Self::from_f64_const(x)
+    }
 }
 
 pub trait SimdSupported {
