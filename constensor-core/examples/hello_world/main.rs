@@ -10,9 +10,9 @@ fn main() {
 
     graph.optimize();
 
-    graph.visualize("output.png").unwrap();
+    graph.visualize("graph.png").unwrap();
 
     let tensor: Tensor<R2<3, 4>, f32, Cpu> = z.to_tensor().unwrap();
 
-    assert_eq!(tensor.data().unwrap().to_vec(), vec![vec![3.0; 4]; 3],);
+    assert_eq!(tensor.data().unwrap().to_vec(), vec![vec![4.0; 4]; 3],);
 }

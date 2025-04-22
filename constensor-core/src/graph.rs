@@ -12,8 +12,11 @@ use std::{
 
 use crate::{DType, Result};
 
-use petgraph::dot::{Config, Dot};
 use petgraph::Graph as PetGraph;
+use petgraph::{
+    dot::{Config, Dot},
+    graph::NodeIndex,
+};
 
 #[derive(Clone)]
 pub struct Graph<T: DType> {
@@ -48,48 +51,69 @@ impl<T: DType> Graph<T> {
         next
     }
 
-    /// Export this computational graph as a petgraph::Graph where nodes are operation labels.
     pub fn to_petgraph(&self) -> PetGraph<String, ()> {
         let ops = self.data.read().unwrap();
         let mut g = PetGraph::<String, ()>::new();
-        let mut nodes = Vec::with_capacity(ops.len());
-        // Add nodes with labels
+        // map from op‐index → Some(node) if we created a node, or None if it was a NoOp
+        let mut idx_map: Vec<Option<NodeIndex>> = Vec::with_capacity(ops.len());
+
+        // 1) Add only non‐NoOp nodes
         for op in ops.iter() {
-            let label = match op {
-                Op::Fill { v } => format!("Fill({:?})", v),
-                Op::Arange { start, step } => format!("Arange(start={:?}, step={:?})", start, step),
-                Op::BinaryOp { operator, .. } => format!("BinOp({})", operator.as_c_op()),
-                Op::UnaryOp { operator, .. } => format!("UnOp({:?})", operator),
-                Op::FusedMulAdd { .. } => "FMA".to_string(),
-                Op::NoOp => "NoOp".to_string(),
-            };
-            nodes.push(g.add_node(label));
+            match op {
+                Op::NoOp => {
+                    idx_map.push(None);
+                }
+                _ => {
+                    let label = match op {
+                        Op::Fill { v } => format!("Fill({:?})", v),
+                        Op::Arange { start, step } => {
+                            format!("Arange(start={:?}, step={:?})", start, step)
+                        }
+                        Op::BinaryOp { operator, .. } => format!("BinOp({})", operator.as_c_op()),
+                        Op::UnaryOp { operator, .. } => format!("UnOp({:?})", operator),
+                        Op::FusedMulAdd { .. } => "FMA".to_string(),
+                        // we already matched NoOp above
+                        _ => unreachable!(),
+                    };
+                    let node = g.add_node(label);
+                    idx_map.push(Some(node));
+                }
+            }
         }
-        // Add edges to represent data dependencies
+
+        // 2) Walk ops again and only connect edges for those dst nodes that exist
         for (i, op) in ops.iter().enumerate() {
-            let dst = nodes[i];
+            // if this op was NoOp, skip entirely
+            let dst = match idx_map[i] {
+                Some(dst) => dst,
+                None => continue,
+            };
             match op {
                 Op::BinaryOp { l_id, r_id, .. } => {
-                    let src_l = nodes[usize::from(l_id)];
-                    let src_r = nodes[usize::from(r_id)];
-                    g.add_edge(src_l, dst, ());
-                    g.add_edge(src_r, dst, ());
+                    if let Some(src) = idx_map[usize::from(l_id)] {
+                        g.add_edge(src, dst, ());
+                    }
+                    if let Some(src) = idx_map[usize::from(r_id)] {
+                        g.add_edge(src, dst, ());
+                    }
                 }
                 Op::UnaryOp { v_id, .. } => {
-                    let src = nodes[usize::from(v_id)];
-                    g.add_edge(src, dst, ());
+                    if let Some(src) = idx_map[usize::from(v_id)] {
+                        g.add_edge(src, dst, ());
+                    }
                 }
                 Op::FusedMulAdd { a_id, b_id, c_id } => {
-                    let src_a = nodes[usize::from(a_id)];
-                    let src_b = nodes[usize::from(b_id)];
-                    let src_c = nodes[usize::from(c_id)];
-                    g.add_edge(src_a, dst, ());
-                    g.add_edge(src_b, dst, ());
-                    g.add_edge(src_c, dst, ());
+                    for src_id in [a_id, b_id, c_id] {
+                        if let Some(src) = idx_map[usize::from(src_id)] {
+                            g.add_edge(src, dst, ());
+                        }
+                    }
                 }
+                // NoOp and Fill/Arange don’t create incoming edges
                 _ => {}
             }
         }
+
         g
     }
 
