@@ -1,10 +1,17 @@
+use std::mem;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::DType;
 
+/// Max size of all buffers, in bytes.
+/// Currently 1GB (1024 MB).
+const MAX_BUFFERS_SIZE: usize = 1024 * 1024 * 1024;
+
 /// A simple buffer pool to reuse Vec allocations across recursive graph evaluation.
 pub struct BufferPool<T> {
     pool: Vec<Vec<T>>,
+    /// Current total capacity of all pooled buffers, in bytes.
+    current_size: usize,
 }
 
 /// Shared reference to a BufferPool for automatic recycling.
@@ -57,7 +64,10 @@ impl<T: DType> Drop for PooledBuffer<T> {
 
 impl<T: DType> BufferPool<T> {
     pub fn new() -> Self {
-        BufferPool { pool: Vec::new() }
+        BufferPool {
+            pool: Vec::new(),
+            current_size: 0,
+        }
     }
 
     /// Grab a Vec with at least `capacity`. Clears and reuses one from the pool if available.
@@ -77,8 +87,21 @@ impl<T: DType> BufferPool<T> {
 
         if let Some(smallest_found_buf) = smallest_found_buf {
             let mut buf = self.pool.swap_remove(smallest_found_buf);
+            let buf_capacity = buf.capacity();
+            self.current_size = self
+                .current_size
+                .saturating_sub(buf_capacity * mem::size_of::<T>());
             buf.clear();
             buf.reserve(capacity);
+
+            debug_assert_eq!(
+                self.current_size,
+                self.pool
+                    .iter()
+                    .map(|b| b.capacity() * size_of::<T>())
+                    .sum()
+            );
+
             buf
         } else {
             Vec::with_capacity(capacity)
@@ -87,6 +110,18 @@ impl<T: DType> BufferPool<T> {
 
     /// Return a Vec back into the pool for reuse.
     pub fn recycle_buffer(&mut self, buf: Vec<T>) {
-        self.pool.push(buf);
+        let buffer_bytes = buf.capacity() * mem::size_of::<T>();
+        if self.current_size + buffer_bytes <= MAX_BUFFERS_SIZE {
+            self.current_size += buffer_bytes;
+            self.pool.push(buf);
+            debug_assert_eq!(
+                self.current_size,
+                self.pool
+                    .iter()
+                    .map(|b| b.capacity() * size_of::<T>())
+                    .sum()
+            );
+        }
+        // Otherwise drop buf and do not grow the pool further
     }
 }

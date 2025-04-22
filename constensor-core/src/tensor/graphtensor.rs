@@ -72,8 +72,6 @@ impl<S: Shape, T: DType, D: Dev> GraphTensor<S, T, D> {
     }
 
     /// Convert this `GraphTensor` into a concrete `Tensor`.
-    /// Only unsigned operations may be used here. This will be enforced
-    /// by the dtype. There is no performance benefit to using this over `to_tensor`.
     pub fn to_tensor(self) -> Result<Tensor<S, T, D>> {
         let graph = self.graph.read().unwrap();
         let nodes = &*graph.get_ops();
