@@ -4,8 +4,10 @@ use std::{cell::RefCell, rc::Rc};
 use crate::DType;
 
 /// Max size of all buffers, in bytes.
-/// Currently 1GB (1024 MB).
-const MAX_BUFFERS_SIZE: usize = 1024 * 1024 * 1024;
+/// Currently 4GB (1024 MB).
+const MAX_BUFFERS_SIZE: usize = 4 * 1024 * 1024 * 1024;
+/// When total pooled bytes exceed this, trim largest buffers down to this level.
+const TRIM_THRESHOLD: usize = MAX_BUFFERS_SIZE / 2;
 
 /// A simple buffer pool to reuse Vec allocations across recursive graph evaluation.
 pub struct BufferPool<T> {
@@ -121,7 +123,36 @@ impl<T: DType> BufferPool<T> {
                     .map(|b| b.capacity() * size_of::<T>())
                     .sum()
             );
+
+            self.trim_excess();
         }
         // Otherwise drop buf and do not grow the pool further
+    }
+
+    /// Remove largest buffers until total pooled bytes ≤ TRIM_THRESHOLD.
+    fn trim_excess(&mut self) {
+        while self.current_size > TRIM_THRESHOLD {
+            // Find index of largest buffer by byte capacity
+            let mut max_idx = 0;
+            let mut max_bytes = 0;
+            for (i, buf) in self.pool.iter().enumerate() {
+                let bbytes = buf.capacity() * mem::size_of::<T>();
+                if bbytes > max_bytes {
+                    max_bytes = bbytes;
+                    max_idx = i;
+                }
+            }
+            // Remove and drop that buffer
+            self.pool.swap_remove(max_idx);
+            self.current_size = self.current_size.saturating_sub(max_bytes);
+        }
+
+        debug_assert_eq!(
+            self.current_size,
+            self.pool
+                .iter()
+                .map(|b| b.capacity() * size_of::<T>())
+                .sum()
+        );
     }
 }
