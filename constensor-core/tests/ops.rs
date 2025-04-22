@@ -47,11 +47,11 @@ macro_rules! test_for_device_float {
             #[test]
             fn arange() {
                 let mut graph = Graph::empty();
-                let x = GraphTensor::<R1<3>, f32, $dev>::fill(&mut graph, 1.0);
-                let y = GraphTensor::<R1<3>, f32, $dev>::arange(&mut graph, 0.0, 1.0);
+                let x = GraphTensor::<R1<4>, f32, $dev>::fill(&mut graph, 1.0);
+                let y = GraphTensor::<R1<4>, f32, $dev>::arange(&mut graph, 0.0, 1.0);
                 let res = x + y;
                 let tensor = res.to_tensor_signed().unwrap();
-                assert_eq!(tensor.data().unwrap().to_vec(), vec![1.0, 2.0, 3.0]);
+                assert_eq!(tensor.data().unwrap().to_vec(), vec![1.0, 1.25, 1.5, 1.75]);
             }
         }
     };
@@ -94,11 +94,11 @@ macro_rules! test_for_device_int {
             #[test]
             fn arange() {
                 let mut graph = Graph::empty();
-                let x = GraphTensor::<R1<3>, i32, $dev>::fill(&mut graph, 1);
-                let y = GraphTensor::<R1<3>, i32, $dev>::arange(&mut graph, 0, 1);
+                let x = GraphTensor::<R1<4>, i32, $dev>::fill(&mut graph, 1);
+                let y = GraphTensor::<R1<4>, i32, $dev>::arange(&mut graph, 0, 4);
                 let res = x + y;
                 let tensor = res.to_tensor_signed().unwrap();
-                assert_eq!(tensor.data().unwrap().to_vec(), vec![1, 2, 3]);
+                assert_eq!(tensor.data().unwrap().to_vec(), vec![1, 2, 3, 4]);
             }
         }
     };
@@ -146,8 +146,8 @@ macro_rules! test_for_device_half {
             #[test]
             fn arange() {
                 let mut graph = Graph::empty();
-                let x = GraphTensor::<R1<3>, f16, $dev>::fill(&mut graph, f16::from_f64_const(1.0));
-                let y = GraphTensor::<R1<3>, f16, $dev>::arange(
+                let x = GraphTensor::<R1<4>, f16, $dev>::fill(&mut graph, f16::from_f64_const(1.0));
+                let y = GraphTensor::<R1<4>, f16, $dev>::arange(
                     &mut graph,
                     f16::from_f64_const(0.0),
                     f16::from_f64_const(1.0),
@@ -158,8 +158,9 @@ macro_rules! test_for_device_half {
                     tensor.data().unwrap().to_vec(),
                     vec![
                         f16::from_f64_const(1.0),
-                        f16::from_f64_const(2.0),
-                        f16::from_f64_const(3.0)
+                        f16::from_f64_const(1.25),
+                        f16::from_f64_const(1.5),
+                        f16::from_f64_const(1.75)
                     ]
                 );
             }
@@ -219,8 +220,8 @@ macro_rules! test_for_device_bfloat {
             fn arange() {
                 let mut graph = Graph::empty();
                 let x =
-                    GraphTensor::<R1<3>, bf16, $dev>::fill(&mut graph, bf16::from_f64_const(1.0));
-                let y = GraphTensor::<R1<3>, bf16, $dev>::arange(
+                    GraphTensor::<R1<4>, bf16, $dev>::fill(&mut graph, bf16::from_f64_const(1.0));
+                let y = GraphTensor::<R1<4>, bf16, $dev>::arange(
                     &mut graph,
                     bf16::from_f64_const(0.0),
                     bf16::from_f64_const(1.0),
@@ -231,8 +232,9 @@ macro_rules! test_for_device_bfloat {
                     tensor.data().unwrap().to_vec(),
                     vec![
                         bf16::from_f64_const(1.0),
-                        bf16::from_f64_const(2.0),
-                        bf16::from_f64_const(3.0)
+                        bf16::from_f64_const(1.25),
+                        bf16::from_f64_const(1.5),
+                        bf16::from_f64_const(1.75)
                     ]
                 );
             }

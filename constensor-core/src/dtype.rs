@@ -52,7 +52,6 @@ impl Sqrtable for f64 {
 }
 
 #[cfg(feature = "bfloat")]
-
 impl Sqrtable for bf16 {
     fn sqrt(&self) -> Self
     where
@@ -63,7 +62,6 @@ impl Sqrtable for bf16 {
 }
 
 #[cfg(feature = "half")]
-
 impl Sqrtable for f16 {
     fn sqrt(&self) -> Self
     where

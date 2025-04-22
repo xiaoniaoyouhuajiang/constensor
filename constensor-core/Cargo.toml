@@ -18,7 +18,7 @@ rayon = "1.10.0"
 petgraph.workspace = true
 
 [features]
-default = []
+default = ["half", "bfloat"]
 all = ["cuda", "half", "bfloat"]
 cuda = ["cudarc"]
 half = ["dep:half"]
