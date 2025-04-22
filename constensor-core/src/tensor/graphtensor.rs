@@ -45,6 +45,22 @@ impl<S: Shape, T: DType, D: Dev> GraphTensor<S, T, D> {
         Self::fill(graph, T::ONE)
     }
 
+    #[must_use]
+    /// Elementwise unary square root.
+    pub fn sqrt(self) -> GraphTensor<S, T, D> {
+        self.graph.write().unwrap().add_op(Op::UnaryOp {
+            v_id: self.id(),
+            operator: UnaryOpType::Sqrt,
+        });
+        Self {
+            id: self.graph.write().unwrap().next_id(),
+            graph: self.graph.clone(),
+            _ghost: PhantomData,
+        }
+    }
+}
+
+impl<S: Shape, T: DType, D: Dev> GraphTensor<S, T, D> {
     /// Retrieve the graph for this `GraphTensor`.
     pub fn graph(&self) -> RwLockReadGuard<Graph<T>> {
         self.graph.read().unwrap()
@@ -65,20 +81,6 @@ impl<S: Shape, T: DType, D: Dev> GraphTensor<S, T, D> {
         let device = D::resolve()?;
         let storage = device.compile_and_run_graph::<T, S>(nodes)?;
         Ok(from_storage(Arc::new(storage)))
-    }
-
-    #[must_use]
-    /// Elementwise unary square root.
-    pub fn sqrt(self) -> GraphTensor<S, T, D> {
-        self.graph.write().unwrap().add_op(Op::UnaryOp {
-            v_id: self.id(),
-            operator: UnaryOpType::Sqrt,
-        });
-        Self {
-            id: self.graph.write().unwrap().next_id(),
-            graph: self.graph.clone(),
-            _ghost: PhantomData,
-        }
     }
 }
 
