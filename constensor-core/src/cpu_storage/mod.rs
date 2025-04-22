@@ -37,10 +37,13 @@ fn evaluate_node<T: DType, S: Shape>(op: &Op<T>, graph: &[Op<T>]) -> Vec<T> {
         Op::Fill { v } => {
             vec![*v; S::element_count()]
         }
-        Op::Arange { start, step } => {
+        Op::Arange { start, step, stop } => {
             let mut accum = Vec::with_capacity(S::element_count());
-            for i in 0..S::element_count() {
-                accum.push(T::offset(i, *start, *step));
+            let mut x = start.to_f64();
+            while x < stop.to_f64() {
+                accum.push(T::from_f64(x));
+
+                x += step.to_f64();
             }
             accum
         }

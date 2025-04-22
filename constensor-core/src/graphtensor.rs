@@ -97,10 +97,15 @@ impl<S: Shape, T: DType + SignedDType, D: Dev> GraphTensor<S, T, D> {
 
 impl<const A: usize, T: DType, D: Dev> GraphTensor<R1<A>, T, D> {
     #[must_use]
-    /// A GraphTensor representing a vector ranging from `start` to `A` with step `step`.
-    pub fn arange(graph: &mut Graph<T>, start: T, step: T) -> Self {
+    /// A GraphTensor representing a vector ranging from `start` to `stop` with `step` computed using A.
+    pub fn arange(graph: &mut Graph<T>, start: T, stop: T) -> Self {
         let id = graph.next_id();
-        graph.add_op(Op::Arange { start, step });
+        let step = (stop.to_f64() - start.to_f64()) / (A as f64);
+        graph.add_op(Op::Arange {
+            start,
+            step: T::from_f64(step),
+            stop,
+        });
         Self {
             id,
             graph: Arc::new(RwLock::new(graph.clone())),

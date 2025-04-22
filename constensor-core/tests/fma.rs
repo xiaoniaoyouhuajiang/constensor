@@ -42,16 +42,16 @@ macro_rules! test_for_device_half_fma {
 
                 let mut graph = Graph::empty();
                 let a =
-                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f32_const(2.0));
+                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f64_const(2.0));
                 let b =
-                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f32_const(3.0));
+                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f64_const(3.0));
                 let c =
-                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f32_const(4.0));
+                    GraphTensor::<R2<3, 4>, f16, $dev>::fill(&mut graph, f16::from_f64_const(4.0));
                 let res = a * b + c;
                 let tensor = res.to_tensor_signed().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
-                    vec![vec![f16::from_f32_const(10.0); 4]; 3],
+                    vec![vec![f16::from_f64_const(10.0); 4]; 3],
                 );
             }
         }
@@ -70,21 +70,21 @@ macro_rules! test_for_device_bfloat_fma {
                 let mut graph = Graph::empty();
                 let a = GraphTensor::<R2<3, 4>, bf16, $dev>::fill(
                     &mut graph,
-                    bf16::from_f32_const(2.0),
+                    bf16::from_f64_const(2.0),
                 );
                 let b = GraphTensor::<R2<3, 4>, bf16, $dev>::fill(
                     &mut graph,
-                    bf16::from_f32_const(3.0),
+                    bf16::from_f64_const(3.0),
                 );
                 let c = GraphTensor::<R2<3, 4>, bf16, $dev>::fill(
                     &mut graph,
-                    bf16::from_f32_const(4.0),
+                    bf16::from_f64_const(4.0),
                 );
                 let res = a * b + c;
                 let tensor = res.to_tensor_signed().unwrap();
                 assert_eq!(
                     tensor.data().unwrap().to_vec(),
-                    vec![vec![bf16::from_f32_const(10.0); 4]; 3],
+                    vec![vec![bf16::from_f64_const(10.0); 4]; 3],
                 );
             }
         }

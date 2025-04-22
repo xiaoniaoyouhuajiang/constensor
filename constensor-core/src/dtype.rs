@@ -112,8 +112,8 @@ pub trait DType: Debug + DeviceRepr + Clone + DTypeOps + Send + Sync {
     const C_DEP: Option<&'static str>;
     const INTEGRAL: bool;
 
-    /// Offset i by start and step using the formula `i*step + start`
-    fn offset(i: usize, start: Self, step: Self) -> Self;
+    fn to_f64(&self) -> f32;
+    fn from_f64(x: f32) -> Self;
 }
 
 #[cfg(not(feature = "cuda"))]
@@ -126,8 +126,8 @@ pub trait DType: Debug + Clone + DTypeOps + Send + Sync {
     const C_DEP: Option<&'static str>;
     const INTEGRAL: bool;
 
-    /// Offset i by start and step using the formula `i*step + start`
-    fn offset(i: usize, start: Self, step: Self) -> Self;
+    fn to_f64(&self) -> f64;
+    fn from_f64(x: f64) -> Self;
 }
 
 macro_rules! dtype {
@@ -141,8 +141,11 @@ macro_rules! dtype {
             const C_DEP: Option<&'static str> = None;
             const INTEGRAL: bool = $integral;
 
-            fn offset(i: usize, start: Self, step: Self) -> Self {
-                (i as $rt) * step + start
+            fn to_f64(&self) -> f64 {
+                *self as f64
+            }
+            fn from_f64(x: f64) -> Self {
+                x as $rt
             }
         }
     };
@@ -159,31 +162,23 @@ dtype!(f64, 0f64, 1f64, "f64", "double", false);
 impl DTypeOps for f16 {}
 #[cfg(feature = "half")]
 impl DType for f16 {
-    const ZERO: f16 = f16::from_f32_const(0.0);
-    const ONE: f16 = f16::from_f32_const(1.0);
+    const ZERO: f16 = f16::from_f64_const(0.0);
+    const ONE: f16 = f16::from_f64_const(1.0);
     const NAME: &'static str = "f16";
     const C_NAME: &'static str = "__half";
     const C_DEP: Option<&'static str> = Some("#include \"cuda_fp16.h\"");
     const INTEGRAL: bool = false;
-
-    fn offset(i: usize, start: Self, step: Self) -> Self {
-        f16::from_f64_const(i as f64) * step + start
-    }
 }
 #[cfg(feature = "bfloat")]
 impl DTypeOps for bf16 {}
 #[cfg(feature = "bfloat")]
 impl DType for bf16 {
-    const ZERO: bf16 = bf16::from_f32_const(0.0);
-    const ONE: bf16 = bf16::from_f32_const(1.0);
+    const ZERO: bf16 = bf16::from_f64_const(0.0);
+    const ONE: bf16 = bf16::from_f64_const(1.0);
     const NAME: &'static str = "bf16";
     const C_NAME: &'static str = "__nv_bfloat16";
     const C_DEP: Option<&'static str> = Some("#include \"cuda_bf16.h\"");
     const INTEGRAL: bool = false;
-
-    fn offset(i: usize, start: Self, step: Self) -> Self {
-        bf16::from_f64_const(i as f64) * step + start
-    }
 }
 
 pub trait SimdSupported {

@@ -66,8 +66,11 @@ impl<T: DType> Graph<T> {
                 _ => {
                     let label = match op {
                         Op::Fill { v } => format!("Fill({:?})", v),
-                        Op::Arange { start, step } => {
-                            format!("Arange(start={:?}, step={:?})", start, step)
+                        Op::Arange { start, step, stop } => {
+                            format!(
+                                "Arange(start={:?}, step={:?}, stop={:?})",
+                                start, step, stop
+                            )
                         }
                         Op::BinaryOp { operator, .. } => format!("BinOp({})", operator.as_c_op()),
                         Op::UnaryOp { operator, .. } => format!("UnOp({:?})", operator),
@@ -136,7 +139,7 @@ impl<T: DType> Graph<T> {
 
         fs::write(&dot_path, self.to_dot())?;
         let status = Command::new("dot")
-            .args(&[
+            .args([
                 "-Tpng",
                 &dot_path.display().to_string(),
                 "-o",
@@ -190,7 +193,11 @@ impl<T: DType> Graph<T> {
                         // Look for ops which actually use this one
                         for user in ops.iter() {
                             let ids = match user {
-                                Op::Arange { start: _, step: _ } => vec![],
+                                Op::Arange {
+                                    start: _,
+                                    step: _,
+                                    stop: _,
+                                } => vec![],
                                 Op::BinaryOp {
                                     l_id,
                                     r_id,
@@ -289,6 +296,7 @@ pub enum Op<T: DType> {
     Arange {
         start: T,
         step: T,
+        stop: T,
     },
     BinaryOp {
         l_id: GraphTensorId,
