@@ -237,52 +237,44 @@ pub trait SimdSupported {
 
 macro_rules! simd_supported {
     ($t:ident BINARY_INTERNAL) => {
-        fn binary_simd_op(lhs: &mut Vec<Self>, mut rhs: Vec<Self>, op: BinaryOpType)
+        fn binary_simd_op(lhs: &mut Vec<Self>, rhs: Vec<Self>, op: BinaryOpType)
         where
             Self: Sized,
         {
-            // Pad to zeros
-            let pad_count = lhs.len() % Self::BLOCK_SIZE;
-            lhs.extend(vec![$t::ONE; Self::BLOCK_SIZE - pad_count]);
-            rhs.extend(vec![$t::ONE; Self::BLOCK_SIZE - pad_count]);
-            let n_blocks = lhs.len() / Self::BLOCK_SIZE;
+            let len = lhs.len();
+            let n_blocks = len / Self::BLOCK_SIZE;
 
-            let mut lhs_simd: Vec<std::simd::Simd<$t, { Self::BLOCK_SIZE }>> =
-                Vec::with_capacity(n_blocks);
-            let mut rhs_simd: Vec<std::simd::Simd<$t, { Self::BLOCK_SIZE }>> =
-                Vec::with_capacity(n_blocks);
-            let l_blocks = lhs.chunks(Self::BLOCK_SIZE).collect::<Vec<_>>();
-            let r_blocks = rhs.chunks(Self::BLOCK_SIZE).collect::<Vec<_>>();
+            // Define SIMD and scalar operations based on the chosen operation
+            let simd_op = |l: std::simd::Simd<$t, { Self::BLOCK_SIZE }>,
+                           r: std::simd::Simd<$t, { Self::BLOCK_SIZE }>| {
+                match op {
+                    BinaryOpType::Add => l + r,
+                    BinaryOpType::Mul => l * r,
+                    BinaryOpType::Sub => l - r,
+                    BinaryOpType::Div => l / r,
+                }
+            };
+            let scalar_op = |l: Self, r: Self| {
+                match op {
+                    BinaryOpType::Add => l + r,
+                    BinaryOpType::Mul => l * r,
+                    BinaryOpType::Sub => l - r,
+                    BinaryOpType::Div => l / r,
+                }
+            };
 
-            for (l_blk, r_blk) in l_blocks.iter().zip(&r_blocks) {
-                lhs_simd.push(std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(
-                    l_blk,
-                ));
-                rhs_simd.push(std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(
-                    r_blk,
-                ));
+            // Vectorized loop
+            for i in 0..n_blocks {
+                let off = i * Self::BLOCK_SIZE;
+                let l_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&lhs[off..off + Self::BLOCK_SIZE]);
+                let r_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&rhs[off..off + Self::BLOCK_SIZE]);
+                let res = simd_op(l_chunk, r_chunk);
+                lhs[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
             }
-            *lhs = lhs_simd
-                .into_iter()
-                .zip(rhs_simd)
-                .map(|(lhs, rhs)| match op {
-                    BinaryOpType::Add => lhs + rhs,
-                    BinaryOpType::Mul => lhs * rhs,
-                    BinaryOpType::Sub => lhs - rhs,
-                    BinaryOpType::Div => lhs / rhs,
-                })
-                .enumerate()
-                .flat_map(
-                    |(i, x): (usize, std::simd::Simd<$t, { Self::BLOCK_SIZE }>)| {
-                        // Handle undoing the padding
-                        if i != n_blocks - 1 {
-                            x.as_array().to_vec()
-                        } else {
-                            x.as_array()[0..pad_count].to_vec()
-                        }
-                    },
-                )
-                .collect::<Vec<_>>();
+            // Scalar fallback for remainder
+            for i in n_blocks * Self::BLOCK_SIZE..len {
+                lhs[i] = scalar_op(lhs[i], rhs[i]);
+            }
         }
     };
 
@@ -290,58 +282,25 @@ macro_rules! simd_supported {
         impl SimdSupported for $t {
             simd_supported!($t BINARY_INTERNAL);
 
-            fn fma_op(lhs: &mut Vec<Self>, mut a: Vec<Self>, mut b: Vec<Self>)
+            fn fma_op(lhs: &mut Vec<Self>, a: Vec<Self>, b: Vec<Self>)
             where
                 Self: Sized,
             {
-                // Pad to zeros
-                let pad_count = lhs.len() % Self::BLOCK_SIZE;
-                lhs.extend(vec![$t::ONE; Self::BLOCK_SIZE - pad_count]);
-                a.extend(vec![$t::ONE; Self::BLOCK_SIZE - pad_count]);
-                b.extend(vec![$t::ONE; Self::BLOCK_SIZE - pad_count]);
-                let n_blocks = lhs.len() / Self::BLOCK_SIZE;
+                let len = lhs.len();
+                let n_blocks = len / Self::BLOCK_SIZE;
 
-                let mut lhs_simd: Vec<std::simd::Simd<$t, { Self::BLOCK_SIZE }>> =
-                    Vec::with_capacity(n_blocks);
-                let mut a_simd: Vec<std::simd::Simd<$t, { Self::BLOCK_SIZE }>> =
-                    Vec::with_capacity(n_blocks);
-                let mut b_simd: Vec<std::simd::Simd<$t, { Self::BLOCK_SIZE }>> =
-                    Vec::with_capacity(n_blocks);
-                let l_blocks = lhs.chunks(Self::BLOCK_SIZE).collect::<Vec<_>>();
-                let a_blocks = a.chunks(Self::BLOCK_SIZE).collect::<Vec<_>>();
-                let b_blocks = b.chunks(Self::BLOCK_SIZE).collect::<Vec<_>>();
-
-                for (l_blk, (a_blk, b_blk)) in l_blocks
-                    .into_iter()
-                    .zip(a_blocks.into_iter().zip(b_blocks.into_iter()))
-                {
-                    lhs_simd.push(std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(
-                        l_blk,
-                    ));
-                    a_simd.push(std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(
-                        a_blk,
-                    ));
-                    b_simd.push(std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(
-                        b_blk,
-                    ));
-                }
                 use std::simd::StdFloat;
-                *lhs = lhs_simd
-                    .into_iter()
-                    .zip(a_simd.into_iter().zip(b_simd))
-                    .map(|(lhs, (a, b))| lhs.mul_add(a, b))
-                    .enumerate()
-                    .flat_map(
-                        |(i, x): (usize, std::simd::Simd<$t, { Self::BLOCK_SIZE }>)| {
-                            // Handle undoing the padding
-                            if i != n_blocks - 1 {
-                                x.as_array().to_vec()
-                            } else {
-                                x.as_array()[0..pad_count].to_vec()
-                            }
-                        },
-                    )
-                    .collect::<Vec<_>>();
+                for i in 0..n_blocks {
+                    let off = i * Self::BLOCK_SIZE;
+                    let l = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&lhs[off..off + Self::BLOCK_SIZE]);
+                    let aa = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let bb = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let res = l.mul_add(aa, bb);
+                    lhs[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                }
+                for i in n_blocks * Self::BLOCK_SIZE..len {
+                    lhs[i] = lhs[i].mul_add(a[i], b[i]);
+                }
             }
         }
     };
@@ -349,58 +308,24 @@ macro_rules! simd_supported {
         impl SimdSupported for $t {
             simd_supported!($t BINARY_INTERNAL);
 
-            fn fma_op(lhs: &mut Vec<Self>, mut a: Vec<Self>, mut b: Vec<Self>)
+            fn fma_op(lhs: &mut Vec<Self>, a: Vec<Self>, b: Vec<Self>)
             where
                 Self: Sized,
             {
-                // Pad to zeros
-                let pad_count = lhs.len() % Self::BLOCK_SIZE;
-                lhs.extend(vec![$t::ONE; Self::BLOCK_SIZE - pad_count]);
-                a.extend(vec![$t::ONE; Self::BLOCK_SIZE - pad_count]);
-                b.extend(vec![$t::ONE; Self::BLOCK_SIZE - pad_count]);
-                let n_blocks = lhs.len() / Self::BLOCK_SIZE;
+                let len = lhs.len();
+                let n_blocks = len / Self::BLOCK_SIZE;
 
-                let mut lhs_simd: Vec<std::simd::Simd<$t, { Self::BLOCK_SIZE }>> =
-                    Vec::with_capacity(n_blocks);
-                let mut a_simd: Vec<std::simd::Simd<$t, { Self::BLOCK_SIZE }>> =
-                    Vec::with_capacity(n_blocks);
-                let mut b_simd: Vec<std::simd::Simd<$t, { Self::BLOCK_SIZE }>> =
-                    Vec::with_capacity(n_blocks);
-                let l_blocks = lhs.chunks(Self::BLOCK_SIZE).collect::<Vec<_>>();
-                let a_blocks = a.chunks(Self::BLOCK_SIZE).collect::<Vec<_>>();
-                let b_blocks = b.chunks(Self::BLOCK_SIZE).collect::<Vec<_>>();
-
-                for (l_blk, (a_blk, b_blk)) in l_blocks
-                    .into_iter()
-                    .zip(a_blocks.into_iter().zip(b_blocks.into_iter()))
-                {
-                    lhs_simd.push(std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(
-                        l_blk,
-                    ));
-                    a_simd.push(std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(
-                        a_blk,
-                    ));
-                    b_simd.push(std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(
-                        b_blk,
-                    ));
+                for i in 0..n_blocks {
+                    let off = i * Self::BLOCK_SIZE;
+                    let l = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&lhs[off..off + Self::BLOCK_SIZE]);
+                    let aa = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let bb = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let res = l * aa + bb;
+                    lhs[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
                 }
-
-                *lhs = lhs_simd
-                    .into_iter()
-                    .zip(a_simd.into_iter().zip(b_simd))
-                    .map(|(lhs, (a, b))| lhs * a + b)
-                    .enumerate()
-                    .flat_map(
-                        |(i, x): (usize, std::simd::Simd<$t, { Self::BLOCK_SIZE }>)| {
-                            // Handle undoing the padding
-                            if i != n_blocks - 1 {
-                                x.as_array().to_vec()
-                            } else {
-                                x.as_array()[0..pad_count].to_vec()
-                            }
-                        },
-                    )
-                    .collect::<Vec<_>>();
+                for i in n_blocks * Self::BLOCK_SIZE..len {
+                    lhs[i] = lhs[i] * a[i] + b[i];
+                }
             }
         }
     };
