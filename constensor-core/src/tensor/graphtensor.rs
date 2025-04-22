@@ -7,7 +7,7 @@ use std::{
 use crate::{
     device::Dev,
     graph::{BinaryOpType, Graph, GraphTensorId, Op, UnaryOpType},
-    tensor::from_storage,
+    tensor::concretetensor::from_storage,
     DType, Result, Shape, SignedDType, Tensor, R1,
 };
 
