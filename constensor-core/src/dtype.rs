@@ -547,7 +547,7 @@ macro_rules! simd_supported {
                     c[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
                 }
                 for i in n_blocks * Self::BLOCK_SIZE..len {
-                    c[i] = a[i] * b[i] + c[i];
+                    c[i] += a[i] * b[i];
                 }
             }
         }
