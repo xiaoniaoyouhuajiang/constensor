@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    collections::HashMap,
     env,
     fmt::Display,
     fs,
@@ -72,10 +73,13 @@ impl<T: DType> Graph<T> {
                             )
                         }
                         Op::BinaryOp { operator, .. } => format!("BinOp({})", operator.as_c_op()),
+                        Op::InplaceBinaryOp { operator, .. } => {
+                            format!("InplaceBinOp({})", operator.as_c_op())
+                        }
                         Op::UnaryOp { operator, .. } => format!("UnOp({:?})", operator),
                         Op::FusedMulAdd { .. } => "FMA".to_string(),
                         // we already matched NoOp above
-                        _ => unreachable!(),
+                        Op::NoOp => unreachable!(),
                     };
                     let node = g.add_node(label);
                     idx_map.push(Some(node));
@@ -99,6 +103,14 @@ impl<T: DType> Graph<T> {
                         g.add_edge(src, dst, ());
                     }
                 }
+                Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                    if let Some(src) = idx_map[usize::from(l_id)] {
+                        g.add_edge(src, dst, ());
+                    }
+                    if let Some(src) = idx_map[usize::from(r_id)] {
+                        g.add_edge(src, dst, ());
+                    }
+                }
                 Op::UnaryOp { v_id, .. } => {
                     if let Some(src) = idx_map[usize::from(v_id)] {
                         g.add_edge(src, dst, ());
@@ -112,7 +124,7 @@ impl<T: DType> Graph<T> {
                     }
                 }
                 // NoOp and Fill/Arange don’t create incoming edges
-                _ => {}
+                Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
             }
         }
 
@@ -202,6 +214,12 @@ impl<T: DType> Graph<T> {
                                     r_id,
                                     operator: _,
                                 } => vec![l_id, r_id],
+                                Op::InplaceBinaryOp {
+                                    l_id,
+                                    r_id,
+                                    out: _,
+                                    operator: _,
+                                } => vec![l_id, r_id],
                                 Op::Fill { v: _ } => vec![],
                                 Op::UnaryOp { v_id, operator: _ } => vec![v_id],
                                 Op::FusedMulAdd { a_id, b_id, c_id } => {
@@ -233,12 +251,111 @@ impl<T: DType> Graph<T> {
         *self.data.write().unwrap() = filtered_ops;
     }
 
+    /// Optimize by inplacing binary operations when inputs are not reused.
+    fn optimize_inplace_bin(&mut self) {
+        let ops = self.data.write().unwrap().clone();
+        let mut new_ops = ops.clone();
+        // Count how often each tensor id is used as an input.
+        let mut usage: HashMap<usize, usize> = HashMap::new();
+        for op in ops.iter() {
+            match op {
+                Op::BinaryOp { l_id, r_id, .. } => {
+                    *usage.entry(usize::from(l_id)).or_default() += 1;
+                    *usage.entry(usize::from(r_id)).or_default() += 1;
+                }
+                Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                    *usage.entry(usize::from(l_id)).or_default() += 1;
+                    *usage.entry(usize::from(r_id)).or_default() += 1;
+                }
+                Op::UnaryOp { v_id, .. } => {
+                    *usage.entry(usize::from(v_id)).or_default() += 1;
+                }
+                Op::FusedMulAdd { a_id, b_id, c_id } => {
+                    *usage.entry(usize::from(a_id)).or_default() += 1;
+                    *usage.entry(usize::from(b_id)).or_default() += 1;
+                    *usage.entry(usize::from(c_id)).or_default() += 1;
+                }
+                Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
+            }
+        }
+        // Transform eligible BinaryOps into InplaceBinaryOps.
+        for (i, op) in ops.iter().enumerate() {
+            if let Op::BinaryOp {
+                l_id,
+                r_id,
+                operator,
+            } = op
+            {
+                let l_idx = usize::from(l_id);
+                let r_idx = usize::from(r_id);
+                let l_use = usage.get(&l_idx).copied().unwrap_or(0);
+                let r_use = usage.get(&r_idx).copied().unwrap_or(0);
+                if l_use == 1 || r_use == 1 {
+                    // Choose target for in-place: if both, default to lhs.
+                    let target = if r_use > l_use {
+                        r_id.clone()
+                    } else {
+                        l_id.clone()
+                    };
+                    // Replace with InplaceBinaryOp
+                    new_ops[i] = Op::InplaceBinaryOp {
+                        out: target.clone(),
+                        l_id: l_id.clone(),
+                        r_id: r_id.clone(),
+                        operator: *operator,
+                    };
+                    // Update all future uses of this op's result (index i) to use 'target'.
+                    for fut in new_ops.iter_mut().skip(i + 1) {
+                        match fut {
+                            Op::BinaryOp { l_id, r_id, .. } => {
+                                if usize::from(&*l_id) == i {
+                                    l_id.0.set(usize::from(&target));
+                                }
+                                if usize::from(&*r_id) == i {
+                                    r_id.0.set(usize::from(&target));
+                                }
+                            }
+                            Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                                if usize::from(&*l_id) == i {
+                                    l_id.0.set(usize::from(&target));
+                                }
+                                if usize::from(&*r_id) == i {
+                                    r_id.0.set(usize::from(&target));
+                                }
+                            }
+                            Op::UnaryOp { v_id, .. } => {
+                                if usize::from(&*v_id) == i {
+                                    v_id.0.set(usize::from(&target));
+                                }
+                            }
+                            Op::FusedMulAdd { a_id, b_id, c_id } => {
+                                if usize::from(&*a_id) == i {
+                                    a_id.0.set(usize::from(&target));
+                                }
+                                if usize::from(&*b_id) == i {
+                                    b_id.0.set(usize::from(&target));
+                                }
+                                if usize::from(&*c_id) == i {
+                                    c_id.0.set(usize::from(&target));
+                                }
+                            }
+                            Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
+                        }
+                    }
+                }
+            }
+        }
+        // Commit the transformed op list.
+        *self.data.write().unwrap() = new_ops;
+    }
+
     /// Optimize this graph.
     ///
     /// Apply the following optimizations
     /// - Fuse mul,add
     pub fn optimize(&mut self) {
         self.optimize_fma();
+        self.optimize_inplace_bin();
     }
 }
 
@@ -303,6 +420,12 @@ pub enum Op<T: DType> {
         stop: T,
     },
     BinaryOp {
+        l_id: GraphTensorId,
+        r_id: GraphTensorId,
+        operator: BinaryOpType,
+    },
+    InplaceBinaryOp {
+        out: GraphTensorId,
         l_id: GraphTensorId,
         r_id: GraphTensorId,
         operator: BinaryOpType,

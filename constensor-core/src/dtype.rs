@@ -230,6 +230,14 @@ pub trait SimdSupported {
     where
         Self: Sized;
 
+    fn binary_simd_op_inplace_lhs(a: &mut [Self], b: &[Self], op: BinaryOpType)
+    where
+        Self: Sized;
+
+    fn binary_simd_op_inplace_rhs(a: &[Self], b: &mut [Self], op: BinaryOpType)
+    where
+        Self: Sized;
+
     fn fma_op(a: &[Self], b: &[Self], c: &[Self], out: &mut Vec<Self>)
     where
         Self: Sized;
@@ -274,6 +282,86 @@ macro_rules! simd_supported {
             // Scalar fallback for remainder
             for i in n_blocks * Self::BLOCK_SIZE..len {
                 out[i] = scalar_op(a[i], b[i]);
+            }
+        }
+
+        fn binary_simd_op_inplace_lhs(a: &mut [Self], b: &[Self], op: BinaryOpType)
+        where
+            Self: Sized,
+        {
+            let len = a.len();
+            let n_blocks = len / Self::BLOCK_SIZE;
+
+            // Define SIMD and scalar operations based on the chosen operation
+            let simd_op = |l: std::simd::Simd<$t, { Self::BLOCK_SIZE }>,
+                           r: std::simd::Simd<$t, { Self::BLOCK_SIZE }>| {
+                match op {
+                    BinaryOpType::Add => l + r,
+                    BinaryOpType::Mul => l * r,
+                    BinaryOpType::Sub => l - r,
+                    BinaryOpType::Div => l / r,
+                }
+            };
+            let scalar_op = |l: Self, r: Self| {
+                match op {
+                    BinaryOpType::Add => l + r,
+                    BinaryOpType::Mul => l * r,
+                    BinaryOpType::Sub => l - r,
+                    BinaryOpType::Div => l / r,
+                }
+            };
+
+            // Vectorized loop
+            for i in 0..n_blocks {
+                let off = i * Self::BLOCK_SIZE;
+                let l_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                let r_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                let res = simd_op(l_chunk, r_chunk);
+                a[off..(off + Self::BLOCK_SIZE).min(len)].copy_from_slice(res.as_array());
+            }
+            // Scalar fallback for remainder
+            for i in n_blocks * Self::BLOCK_SIZE..len {
+                a[i] = scalar_op(a[i], b[i]);
+            }
+        }
+
+        fn binary_simd_op_inplace_rhs(a: &[Self], b: &mut [Self], op: BinaryOpType)
+        where
+            Self: Sized,
+        {
+            let len = a.len();
+            let n_blocks = len / Self::BLOCK_SIZE;
+
+            // Define SIMD and scalar operations based on the chosen operation
+            let simd_op = |l: std::simd::Simd<$t, { Self::BLOCK_SIZE }>,
+                           r: std::simd::Simd<$t, { Self::BLOCK_SIZE }>| {
+                match op {
+                    BinaryOpType::Add => l + r,
+                    BinaryOpType::Mul => l * r,
+                    BinaryOpType::Sub => l - r,
+                    BinaryOpType::Div => l / r,
+                }
+            };
+            let scalar_op = |l: Self, r: Self| {
+                match op {
+                    BinaryOpType::Add => l + r,
+                    BinaryOpType::Mul => l * r,
+                    BinaryOpType::Sub => l - r,
+                    BinaryOpType::Div => l / r,
+                }
+            };
+
+            // Vectorized loop
+            for i in 0..n_blocks {
+                let off = i * Self::BLOCK_SIZE;
+                let l_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                let r_chunk = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                let res = simd_op(l_chunk, r_chunk);
+                b[off..(off + Self::BLOCK_SIZE).min(len)].copy_from_slice(res.as_array());
+            }
+            // Scalar fallback for remainder
+            for i in n_blocks * Self::BLOCK_SIZE..len {
+                b[i] = scalar_op(a[i], b[i]);
             }
         }
     };
@@ -344,6 +432,36 @@ macro_rules! simd_supported {
                         BinaryOpType::Mul => *lhs * rhs,
                         BinaryOpType::Sub => *lhs - rhs,
                         BinaryOpType::Div => *lhs / rhs,
+                    });
+            }
+
+            fn binary_simd_op_inplace_lhs(a: &mut [Self], b: &[Self], op: BinaryOpType)
+            where
+                Self: Sized,
+            {
+                use rayon::prelude::*;
+
+                a.par_iter_mut().zip(b)
+                    .for_each(|(lhs, rhs)| *lhs = match op {
+                        BinaryOpType::Add => *lhs + rhs,
+                        BinaryOpType::Mul => *lhs * rhs,
+                        BinaryOpType::Sub => *lhs - rhs,
+                        BinaryOpType::Div => *lhs / rhs,
+                    });
+            }
+
+            fn binary_simd_op_inplace_rhs(a: &[Self], b: &mut[Self], op: BinaryOpType)
+            where
+                Self: Sized,
+            {
+                use rayon::prelude::*;
+
+                b.par_iter_mut().zip(a)
+                    .for_each(|(rhs, lhs)| *rhs = match op {
+                        BinaryOpType::Add => *lhs + *rhs,
+                        BinaryOpType::Mul => *lhs * *rhs,
+                        BinaryOpType::Sub => *lhs - *rhs,
+                        BinaryOpType::Div => *lhs / *rhs,
                     });
             }
 

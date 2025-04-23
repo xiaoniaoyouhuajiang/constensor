@@ -52,6 +52,12 @@ impl BackendDevice for CpuDevice {
                         dep_graph.add_edge(l_idx, idx, ());
                         dep_graph.add_edge(r_idx, idx, ());
                     }
+                    Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                        let l_idx = <&GraphTensorId as Into<usize>>::into(l_id);
+                        let r_idx = <&GraphTensorId as Into<usize>>::into(r_id);
+                        dep_graph.add_edge(l_idx, idx, ());
+                        dep_graph.add_edge(r_idx, idx, ());
+                    }
                     Op::UnaryOp { v_id, .. } => {
                         let v_idx = <&GraphTensorId as Into<usize>>::into(v_id);
                         dep_graph.add_edge(v_idx, idx, ());
@@ -64,7 +70,8 @@ impl BackendDevice for CpuDevice {
                         dep_graph.add_edge(b_idx, idx, ());
                         dep_graph.add_edge(c_idx, idx, ());
                     }
-                    _ => {}
+                    // NoOp and Fill/Arange don’t create incoming edges
+                    Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
                 }
             }
 
@@ -89,8 +96,29 @@ impl BackendDevice for CpuDevice {
                         let l_buf = results[l_idx].as_ref().unwrap();
                         let r_buf = results[r_idx].as_ref().unwrap();
                         let mut out = pool.borrow_mut().get_buffer(S::element_count());
-                        T::binary_simd_op(&*l_buf, &*r_buf, &mut out, *operator);
+                        T::binary_simd_op(l_buf, r_buf, &mut out, *operator);
                         PooledBuffer::new(out, pool.clone())
+                    }
+                    Op::InplaceBinaryOp {
+                        out,
+                        l_id,
+                        r_id,
+                        operator,
+                    } => {
+                        let l_idx = <&GraphTensorId as Into<usize>>::into(l_id);
+                        let r_idx = <&GraphTensorId as Into<usize>>::into(r_id);
+                        let o_idx = <&GraphTensorId as Into<usize>>::into(out);
+                        if o_idx == l_idx {
+                            let mut l_buf = results[l_idx].take().unwrap();
+                            let r_buf = results[r_idx].as_ref().unwrap();
+                            T::binary_simd_op_inplace_lhs(&mut l_buf, r_buf, *operator);
+                            l_buf
+                        } else {
+                            let mut r_buf = results[r_idx].take().unwrap();
+                            let l_buf = results[l_idx].as_ref().unwrap();
+                            T::binary_simd_op_inplace_rhs(l_buf, &mut r_buf, *operator);
+                            r_buf
+                        }
                     }
                     Op::Fill { v } => {
                         let mut buf = pool.borrow_mut().get_empty_buffer(S::element_count());
