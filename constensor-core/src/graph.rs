@@ -78,6 +78,7 @@ impl<T: DType> Graph<T> {
                         }
                         Op::UnaryOp { operator, .. } => format!("UnOp({:?})", operator),
                         Op::FusedMulAdd { .. } => "FMA".to_string(),
+                        Op::InplaceFusedMulAdd { .. } => "InplaceFMA".to_string(),
                         // we already matched NoOp above
                         Op::NoOp => unreachable!(),
                     };
@@ -95,15 +96,7 @@ impl<T: DType> Graph<T> {
                 None => continue,
             };
             match op {
-                Op::BinaryOp { l_id, r_id, .. } => {
-                    if let Some(src) = idx_map[usize::from(l_id)] {
-                        g.add_edge(src, dst, ());
-                    }
-                    if let Some(src) = idx_map[usize::from(r_id)] {
-                        g.add_edge(src, dst, ());
-                    }
-                }
-                Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                Op::BinaryOp { l_id, r_id, .. } | Op::InplaceBinaryOp { l_id, r_id, .. } => {
                     if let Some(src) = idx_map[usize::from(l_id)] {
                         g.add_edge(src, dst, ());
                     }
@@ -116,7 +109,10 @@ impl<T: DType> Graph<T> {
                         g.add_edge(src, dst, ());
                     }
                 }
-                Op::FusedMulAdd { a_id, b_id, c_id } => {
+                Op::FusedMulAdd { a_id, b_id, c_id }
+                | Op::InplaceFusedMulAdd {
+                    a_id, b_id, c_id, ..
+                } => {
                     for src_id in [a_id, b_id, c_id] {
                         if let Some(src) = idx_map[usize::from(src_id)] {
                             g.add_edge(src, dst, ());
@@ -209,20 +205,14 @@ impl<T: DType> Graph<T> {
                                     step: _,
                                     stop: _,
                                 } => vec![],
-                                Op::BinaryOp {
-                                    l_id,
-                                    r_id,
-                                    operator: _,
-                                } => vec![l_id, r_id],
-                                Op::InplaceBinaryOp {
-                                    l_id,
-                                    r_id,
-                                    out: _,
-                                    operator: _,
-                                } => vec![l_id, r_id],
+                                Op::BinaryOp { l_id, r_id, .. }
+                                | Op::InplaceBinaryOp { l_id, r_id, .. } => vec![l_id, r_id],
                                 Op::Fill { v: _ } => vec![],
                                 Op::UnaryOp { v_id, operator: _ } => vec![v_id],
-                                Op::FusedMulAdd { a_id, b_id, c_id } => {
+                                Op::FusedMulAdd { a_id, b_id, c_id }
+                                | Op::InplaceFusedMulAdd {
+                                    a_id, b_id, c_id, ..
+                                } => {
                                     vec![a_id, b_id, c_id]
                                 }
                                 Op::NoOp => vec![],
@@ -259,18 +249,17 @@ impl<T: DType> Graph<T> {
         let mut usage: HashMap<usize, usize> = HashMap::new();
         for op in ops.iter() {
             match op {
-                Op::BinaryOp { l_id, r_id, .. } => {
-                    *usage.entry(usize::from(l_id)).or_default() += 1;
-                    *usage.entry(usize::from(r_id)).or_default() += 1;
-                }
-                Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                Op::BinaryOp { l_id, r_id, .. } | Op::InplaceBinaryOp { l_id, r_id, .. } => {
                     *usage.entry(usize::from(l_id)).or_default() += 1;
                     *usage.entry(usize::from(r_id)).or_default() += 1;
                 }
                 Op::UnaryOp { v_id, .. } => {
                     *usage.entry(usize::from(v_id)).or_default() += 1;
                 }
-                Op::FusedMulAdd { a_id, b_id, c_id } => {
+                Op::FusedMulAdd { a_id, b_id, c_id }
+                | Op::InplaceFusedMulAdd {
+                    a_id, b_id, c_id, ..
+                } => {
                     *usage.entry(usize::from(a_id)).or_default() += 1;
                     *usage.entry(usize::from(b_id)).or_default() += 1;
                     *usage.entry(usize::from(c_id)).or_default() += 1;
@@ -307,15 +296,8 @@ impl<T: DType> Graph<T> {
                     // Update all future uses of this op's result (index i) to use 'target'.
                     for fut in new_ops.iter_mut().skip(i + 1) {
                         match fut {
-                            Op::BinaryOp { l_id, r_id, .. } => {
-                                if usize::from(&*l_id) == i {
-                                    l_id.0.set(usize::from(&target));
-                                }
-                                if usize::from(&*r_id) == i {
-                                    r_id.0.set(usize::from(&target));
-                                }
-                            }
-                            Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                            Op::BinaryOp { l_id, r_id, .. }
+                            | Op::InplaceBinaryOp { l_id, r_id, .. } => {
                                 if usize::from(&*l_id) == i {
                                     l_id.0.set(usize::from(&target));
                                 }
@@ -328,7 +310,10 @@ impl<T: DType> Graph<T> {
                                     v_id.0.set(usize::from(&target));
                                 }
                             }
-                            Op::FusedMulAdd { a_id, b_id, c_id } => {
+                            Op::FusedMulAdd { a_id, b_id, c_id }
+                            | Op::InplaceFusedMulAdd {
+                                a_id, b_id, c_id, ..
+                            } => {
                                 if usize::from(&*a_id) == i {
                                     a_id.0.set(usize::from(&target));
                                 }
@@ -349,6 +334,90 @@ impl<T: DType> Graph<T> {
         *self.data.write().unwrap() = new_ops;
     }
 
+    /// Optimize by inplacing fused multiply-add (FMA) operations when inputs are not reused.
+    fn optimize_inplace_fma(&mut self) {
+        let ops = self.data.write().unwrap().clone();
+        let mut new_ops = ops.clone();
+        // Count usage of each tensor id as an input.
+        let mut usage: HashMap<usize, usize> = HashMap::new();
+        for op in ops.iter() {
+            match op {
+                Op::BinaryOp { l_id, r_id, .. } | Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                    *usage.entry(usize::from(l_id)).or_default() += 1;
+                    *usage.entry(usize::from(r_id)).or_default() += 1;
+                }
+                Op::UnaryOp { v_id, .. } => {
+                    *usage.entry(usize::from(v_id)).or_default() += 1;
+                }
+                Op::FusedMulAdd { a_id, b_id, c_id }
+                | Op::InplaceFusedMulAdd {
+                    a_id, b_id, c_id, ..
+                } => {
+                    *usage.entry(usize::from(a_id)).or_default() += 1;
+                    *usage.entry(usize::from(b_id)).or_default() += 1;
+                    *usage.entry(usize::from(c_id)).or_default() += 1;
+                }
+                Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
+            }
+        }
+        for (i, op) in ops.iter().enumerate() {
+            if let Op::FusedMulAdd { a_id, b_id, c_id } = op {
+                let mut target = None;
+                // If an input is used only once, we can reuse its buffer; default order: a_id, then b_id, then c_id
+                if *usage.get(&usize::from(a_id)).unwrap_or(&0) == 1 {
+                    target = Some(a_id.clone());
+                } else if *usage.get(&usize::from(b_id)).unwrap_or(&0) == 1 {
+                    target = Some(b_id.clone());
+                } else if *usage.get(&usize::from(c_id)).unwrap_or(&0) == 1 {
+                    target = Some(c_id.clone());
+                }
+                if let Some(out) = target {
+                    new_ops[i] = Op::InplaceFusedMulAdd {
+                        out: out.clone(),
+                        a_id: a_id.clone(),
+                        b_id: b_id.clone(),
+                        c_id: c_id.clone(),
+                    };
+                    // Update all future ops that reference the original index i
+                    for fut in new_ops.iter_mut().skip(i + 1) {
+                        match fut {
+                            Op::BinaryOp { l_id, r_id, .. }
+                            | Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                                if usize::from(&*l_id) == i {
+                                    l_id.0.set(usize::from(&out));
+                                }
+                                if usize::from(&*r_id) == i {
+                                    r_id.0.set(usize::from(&out));
+                                }
+                            }
+                            Op::UnaryOp { v_id, .. } => {
+                                if usize::from(&*v_id) == i {
+                                    v_id.0.set(usize::from(&out));
+                                }
+                            }
+                            Op::FusedMulAdd { a_id, b_id, c_id }
+                            | Op::InplaceFusedMulAdd {
+                                a_id, b_id, c_id, ..
+                            } => {
+                                if usize::from(&*a_id) == i {
+                                    a_id.0.set(usize::from(&out));
+                                }
+                                if usize::from(&*b_id) == i {
+                                    b_id.0.set(usize::from(&out));
+                                }
+                                if usize::from(&*c_id) == i {
+                                    c_id.0.set(usize::from(&out));
+                                }
+                            }
+                            Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
+                        }
+                    }
+                }
+            }
+        }
+        *self.data.write().unwrap() = new_ops;
+    }
+
     /// Optimize this graph.
     ///
     /// Apply the following optimizations
@@ -356,6 +425,7 @@ impl<T: DType> Graph<T> {
     pub fn optimize(&mut self) {
         self.optimize_fma();
         self.optimize_inplace_bin();
+        self.optimize_inplace_fma();
     }
 }
 
@@ -436,6 +506,13 @@ pub enum Op<T: DType> {
     },
     /// a * b + c
     FusedMulAdd {
+        a_id: GraphTensorId,
+        b_id: GraphTensorId,
+        c_id: GraphTensorId,
+    },
+    /// a * b + c
+    InplaceFusedMulAdd {
+        out: GraphTensorId,
         a_id: GraphTensorId,
         b_id: GraphTensorId,
         c_id: GraphTensorId,

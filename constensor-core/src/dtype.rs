@@ -241,6 +241,18 @@ pub trait SimdSupported {
     fn fma_op(a: &[Self], b: &[Self], c: &[Self], out: &mut Vec<Self>)
     where
         Self: Sized;
+
+    fn fma_op_inplace_a(a: &mut [Self], b: &[Self], c: &[Self])
+    where
+        Self: Sized;
+
+    fn fma_op_inplace_b(a: &[Self], b: &mut [Self], c: &[Self])
+    where
+        Self: Sized;
+
+    fn fma_op_inplace_c(a: &[Self], b: &[Self], c: &mut [Self])
+    where
+        Self: Sized;
 }
 
 macro_rules! simd_supported {
@@ -390,6 +402,69 @@ macro_rules! simd_supported {
                     out[i] = a[i].mul_add(b[i], c[i]);
                 }
             }
+
+            fn fma_op_inplace_a(a: &mut [Self], b: &[Self], c: &[Self])
+            where
+                Self: Sized,
+            {
+                let len = a.len();
+                let n_blocks = len / Self::BLOCK_SIZE;
+
+                use std::simd::StdFloat;
+                for i in 0..n_blocks {
+                    let off = i * Self::BLOCK_SIZE;
+                    let ax = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let b = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let c = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&c[off..off + Self::BLOCK_SIZE]);
+                    let res = ax.mul_add(b, c);
+                    a[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                }
+                for i in n_blocks * Self::BLOCK_SIZE..len {
+                    a[i] = a[i].mul_add(b[i], c[i]);
+                }
+            }
+
+            fn fma_op_inplace_b(a: &[Self], b: &mut [Self], c: &[Self])
+            where
+                Self: Sized,
+            {
+                let len = a.len();
+                let n_blocks = len / Self::BLOCK_SIZE;
+
+                use std::simd::StdFloat;
+                for i in 0..n_blocks {
+                    let off = i * Self::BLOCK_SIZE;
+                    let a = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let bx = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let c = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&c[off..off + Self::BLOCK_SIZE]);
+                    let res = a.mul_add(bx, c);
+                    b[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                }
+                for i in n_blocks * Self::BLOCK_SIZE..len {
+                    b[i] = a[i].mul_add(b[i], c[i]);
+                }
+            }
+
+            fn fma_op_inplace_c(a: &[Self], b: &[Self], c: &mut [Self])
+            where
+                Self: Sized,
+            {
+                let len = a.len();
+                let n_blocks = len / Self::BLOCK_SIZE;
+
+                use std::simd::StdFloat;
+                for i in 0..n_blocks {
+                    let off = i * Self::BLOCK_SIZE;
+                    let a = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let b = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let cx = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&c[off..off + Self::BLOCK_SIZE]);
+                    let res = a.mul_add(b, cx);
+                    c[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                }
+                for i in n_blocks * Self::BLOCK_SIZE..len {
+                    c[i] = c[i].mul_add(b[i], c[i]);
+                }
+            }
         }
     };
     ($t:ident NOFMA) => {
@@ -413,6 +488,66 @@ macro_rules! simd_supported {
                 }
                 for i in n_blocks * Self::BLOCK_SIZE..len {
                     out[i] = a[i] * b[i] + c[i];
+                }
+            }
+
+            fn fma_op_inplace_a(a: &mut [Self], b: &[Self], c: &[Self])
+            where
+                Self: Sized,
+            {
+                let len = a.len();
+                let n_blocks = len / Self::BLOCK_SIZE;
+
+                for i in 0..n_blocks {
+                    let off = i * Self::BLOCK_SIZE;
+                    let ax = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let b = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let c = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&c[off..off + Self::BLOCK_SIZE]);
+                    let res = ax * b + c;
+                    a[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                }
+                for i in n_blocks * Self::BLOCK_SIZE..len {
+                    a[i] = a[i] * b[i] + c[i];
+                }
+            }
+
+            fn fma_op_inplace_b(a: &[Self], b: &mut [Self], c: &[Self])
+            where
+                Self: Sized,
+            {
+                let len = a.len();
+                let n_blocks = len / Self::BLOCK_SIZE;
+
+                for i in 0..n_blocks {
+                    let off = i * Self::BLOCK_SIZE;
+                    let a = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let bx = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let c = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&c[off..off + Self::BLOCK_SIZE]);
+                    let res = a * bx + c;
+                    b[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                }
+                for i in n_blocks * Self::BLOCK_SIZE..len {
+                    b[i] = a[i] * b[i] + c[i];
+                }
+            }
+
+            fn fma_op_inplace_c(a: &[Self], b: &[Self], c: &mut [Self])
+            where
+                Self: Sized,
+            {
+                let len = a.len();
+                let n_blocks = len / Self::BLOCK_SIZE;
+
+                for i in 0..n_blocks {
+                    let off = i * Self::BLOCK_SIZE;
+                    let a = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&a[off..off + Self::BLOCK_SIZE]);
+                    let b = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&b[off..off + Self::BLOCK_SIZE]);
+                    let cx = std::simd::Simd::<$t, { Self::BLOCK_SIZE }>::from_slice(&c[off..off + Self::BLOCK_SIZE]);
+                    let res = a * b + cx;
+                    c[off..off + Self::BLOCK_SIZE].copy_from_slice(res.as_array());
+                }
+                for i in n_blocks * Self::BLOCK_SIZE..len {
+                    c[i] = a[i] * b[i] + c[i];
                 }
             }
         }
@@ -474,6 +609,39 @@ macro_rules! simd_supported {
                 out.par_iter_mut()
                     .zip(a.par_iter().zip(b.par_iter().zip(c)))
                     .for_each(|(out, (a, (b, c)))| *out = *a * *b + *c);
+            }
+
+            fn fma_op_inplace_a(a: &mut [Self], b: &[Self], c: &[Self])
+            where
+                Self: Sized,
+            {
+                use rayon::prelude::*;
+
+                a.par_iter_mut()
+                    .zip(b.par_iter().zip(c))
+                    .for_each(|(a, (b, c))| *a = *a * *b + *c);
+            }
+
+            fn fma_op_inplace_b(a: &[Self], b: &mut [Self], c: &[Self])
+            where
+                Self: Sized,
+            {
+                use rayon::prelude::*;
+
+                b.par_iter_mut()
+                    .zip(a.par_iter().zip(c))
+                    .for_each(|(b, (a, c))| *b = *a * *b + *c);
+            }
+
+            fn fma_op_inplace_c(a: &[Self], b: &[Self], c: &mut [Self])
+            where
+                Self: Sized,
+            {
+                use rayon::prelude::*;
+
+                c.par_iter_mut()
+                    .zip(a.par_iter().zip(b))
+                    .for_each(|(c, (a, b))| *c = *a * *b + *c);
             }
         }
     };

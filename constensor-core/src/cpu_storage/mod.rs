@@ -46,13 +46,7 @@ impl BackendDevice for CpuDevice {
 
             for (idx, node) in graph.iter().enumerate() {
                 match node {
-                    Op::BinaryOp { l_id, r_id, .. } => {
-                        let l_idx = <&GraphTensorId as Into<usize>>::into(l_id);
-                        let r_idx = <&GraphTensorId as Into<usize>>::into(r_id);
-                        dep_graph.add_edge(l_idx, idx, ());
-                        dep_graph.add_edge(r_idx, idx, ());
-                    }
-                    Op::InplaceBinaryOp { l_id, r_id, .. } => {
+                    Op::BinaryOp { l_id, r_id, .. } | Op::InplaceBinaryOp { l_id, r_id, .. } => {
                         let l_idx = <&GraphTensorId as Into<usize>>::into(l_id);
                         let r_idx = <&GraphTensorId as Into<usize>>::into(r_id);
                         dep_graph.add_edge(l_idx, idx, ());
@@ -62,7 +56,10 @@ impl BackendDevice for CpuDevice {
                         let v_idx = <&GraphTensorId as Into<usize>>::into(v_id);
                         dep_graph.add_edge(v_idx, idx, ());
                     }
-                    Op::FusedMulAdd { a_id, b_id, c_id } => {
+                    Op::FusedMulAdd { a_id, b_id, c_id }
+                    | Op::InplaceFusedMulAdd {
+                        a_id, b_id, c_id, ..
+                    } => {
                         let a_idx = <&GraphTensorId as Into<usize>>::into(a_id);
                         let b_idx = <&GraphTensorId as Into<usize>>::into(b_id);
                         let c_idx = <&GraphTensorId as Into<usize>>::into(c_id);
@@ -113,11 +110,13 @@ impl BackendDevice for CpuDevice {
                             let r_buf = results[r_idx].as_ref().unwrap();
                             T::binary_simd_op_inplace_lhs(&mut l_buf, r_buf, *operator);
                             l_buf
-                        } else {
+                        } else if o_idx == r_idx {
                             let mut r_buf = results[r_idx].take().unwrap();
                             let l_buf = results[l_idx].as_ref().unwrap();
                             T::binary_simd_op_inplace_rhs(l_buf, &mut r_buf, *operator);
                             r_buf
+                        } else {
+                            unreachable!()
                         }
                     }
                     Op::Fill { v } => {
@@ -155,6 +154,42 @@ impl BackendDevice for CpuDevice {
                         let mut out = pool.borrow_mut().get_buffer(S::element_count());
                         T::fma_op(a_buf, b_buf, c_buf, &mut out);
                         PooledBuffer::new(out, pool.clone())
+                    }
+                    Op::InplaceFusedMulAdd {
+                        a_id,
+                        b_id,
+                        c_id,
+                        out,
+                    } => {
+                        let a_idx = <&GraphTensorId as Into<usize>>::into(a_id);
+                        let b_idx = <&GraphTensorId as Into<usize>>::into(b_id);
+                        let c_idx = <&GraphTensorId as Into<usize>>::into(c_id);
+                        let o_idx = <&GraphTensorId as Into<usize>>::into(out);
+
+                        if o_idx == a_idx {
+                            let mut a_buf = results[a_idx].take().unwrap();
+                            let b_buf = results[b_idx].as_ref().unwrap();
+                            let c_buf = results[c_idx].as_ref().unwrap();
+
+                            T::fma_op_inplace_a(&mut a_buf, b_buf, c_buf);
+                            a_buf
+                        } else if o_idx == b_idx {
+                            let mut b_buf = results[b_idx].take().unwrap();
+                            let a_buf = results[a_idx].as_ref().unwrap();
+                            let c_buf = results[c_idx].as_ref().unwrap();
+
+                            T::fma_op_inplace_b(a_buf, &mut b_buf, c_buf);
+                            b_buf
+                        } else if o_idx == c_idx {
+                            let mut c_buf = results[c_idx].take().unwrap();
+                            let a_buf = results[a_idx].as_ref().unwrap();
+                            let b_buf = results[b_idx].as_ref().unwrap();
+
+                            T::fma_op_inplace_c(a_buf, b_buf, &mut c_buf);
+                            c_buf
+                        } else {
+                            unreachable!()
+                        }
                     }
                     Op::NoOp => unreachable!("NoOp should not be evaluated."),
                 };
