@@ -241,13 +241,10 @@ impl<T: DType> Graph<T> {
         *self.data.write().unwrap() = filtered_ops;
     }
 
-    /// Optimize by inplacing binary operations when inputs are not reused.
-    fn optimize_inplace_bin(&mut self) {
-        let ops = self.data.write().unwrap().clone();
-        let mut new_ops = ops.clone();
-        // Count how often each tensor id is used as an input.
+    /// Count how often each tensor id is used as an input.
+    fn count_input_usage(ops: &[Op<T>]) -> HashMap<usize, usize> {
         let mut usage: HashMap<usize, usize> = HashMap::new();
-        for op in ops.iter() {
+        for op in ops {
             match op {
                 Op::BinaryOp { l_id, r_id, .. } | Op::InplaceBinaryOp { l_id, r_id, .. } => {
                     *usage.entry(usize::from(l_id)).or_default() += 1;
@@ -267,6 +264,14 @@ impl<T: DType> Graph<T> {
                 Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
             }
         }
+        usage
+    }
+
+    /// Optimize by inplacing binary operations when inputs are not reused.
+    fn optimize_inplace_bin(&mut self) {
+        let ops = self.data.write().unwrap().clone();
+        let mut new_ops = ops.clone();
+        let usage = Self::count_input_usage(&ops);
         // Transform eligible BinaryOps into InplaceBinaryOps.
         for (i, op) in ops.iter().enumerate() {
             if let Op::BinaryOp {
@@ -338,28 +343,7 @@ impl<T: DType> Graph<T> {
     fn optimize_inplace_fma(&mut self) {
         let ops = self.data.write().unwrap().clone();
         let mut new_ops = ops.clone();
-        // Count usage of each tensor id as an input.
-        let mut usage: HashMap<usize, usize> = HashMap::new();
-        for op in ops.iter() {
-            match op {
-                Op::BinaryOp { l_id, r_id, .. } | Op::InplaceBinaryOp { l_id, r_id, .. } => {
-                    *usage.entry(usize::from(l_id)).or_default() += 1;
-                    *usage.entry(usize::from(r_id)).or_default() += 1;
-                }
-                Op::UnaryOp { v_id, .. } => {
-                    *usage.entry(usize::from(v_id)).or_default() += 1;
-                }
-                Op::FusedMulAdd { a_id, b_id, c_id }
-                | Op::InplaceFusedMulAdd {
-                    a_id, b_id, c_id, ..
-                } => {
-                    *usage.entry(usize::from(a_id)).or_default() += 1;
-                    *usage.entry(usize::from(b_id)).or_default() += 1;
-                    *usage.entry(usize::from(c_id)).or_default() += 1;
-                }
-                Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
-            }
-        }
+        let usage = Self::count_input_usage(&ops);
         for (i, op) in ops.iter().enumerate() {
             if let Op::FusedMulAdd { a_id, b_id, c_id } = op {
                 let mut target = None;
