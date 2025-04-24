@@ -1,0 +1,234 @@
+use gemm::{gemm, Parallelism};
+
+#[cfg(feature = "bfloat")]
+use half::bf16;
+#[cfg(feature = "half")]
+use half::f16;
+
+pub trait GemmDispatch {
+    // In bytes, this is also the lane count in bytes
+    const BLOCK_SIZE: usize = 8;
+
+    #[allow(clippy::too_many_arguments)]
+    // Matrix multiplication: (B x M x K) * (B x K x N) = (B x M x N)
+    fn launch_gemm(
+        lhs: &[Self],
+        rhs: &[Self],
+        b: usize,
+        m: usize,
+        n: usize,
+        k: usize,
+        out: &mut Vec<Self>,
+        alpha: Self,
+        beta: Self,
+    ) where
+        Self: Sized;
+}
+
+macro_rules! instantiate_gemm {
+    ($rt:ident, $init:expr, NAIVE) => {
+        impl GemmDispatch for $rt {
+            fn launch_gemm(
+                lhs: &[Self],
+                rhs: &[Self],
+                b: usize,
+                m: usize,
+                n: usize,
+                k: usize,
+                out: &mut Vec<Self>,
+                alpha: Self,
+                beta: Self,
+            ) where
+                Self: Sized,
+            {
+                for b in 0..b {
+                    for i in 0..m {
+                        for j in 0..n {
+                            let mut sum = $init;
+                            for p in 0..k {
+                                sum +=
+                                    beta * lhs[b * m * k + i * k + p] * rhs[b * k * n + p * n + j];
+                            }
+                            out[b * m * n + i * n + j] = alpha * out[b * m * n + i * n + j] + sum;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    ($rt:ident, $zero:expr,  GEMM) => {
+        impl GemmDispatch for $rt {
+            fn launch_gemm(
+                lhs: &[Self],
+                rhs: &[Self],
+                b: usize,
+                m: usize,
+                n: usize,
+                k: usize,
+                out: &mut Vec<Self>,
+                alpha: Self,
+                beta: Self,
+            ) where
+                Self: Sized,
+            {
+                let num_threads = num_cpus::get();
+                let parallelism = if num_threads > 1 {
+                    Parallelism::Rayon(num_threads)
+                } else {
+                    Parallelism::None
+                };
+
+                // cs = stride[-1], rs = stride[-2]
+                let dst_cs = 1;
+                let dst_rs = n;
+
+                let lhs_cs = 1;
+                let lhs_rs = k;
+
+                let rhs_cs = 1;
+                let rhs_rs = n;
+
+                let read_dst = alpha != $zero;
+
+                for b in 0..b {
+                    let lhs_p = &lhs[b * m * k..];
+                    let rhs_p = &rhs[b * k * n..];
+                    let out_p = &mut out[b * m * n..];
+
+                    unsafe {
+                        gemm(
+                            /* m: usize = */ m,
+                            /* n: usize = */ n,
+                            /* k: usize = */ k,
+                            /* dst: *mut T = */ out_p.as_mut_ptr(),
+                            /* dst_cs: isize = */ dst_cs as isize,
+                            /* dst_rs: isize = */ dst_rs as isize,
+                            /* read_dst: bool = */ read_dst,
+                            /* lhs: *const T = */ lhs_p.as_ptr(),
+                            /* lhs_cs: isize = */ lhs_cs as isize,
+                            /* lhs_rs: isize = */ lhs_rs as isize,
+                            /* rhs: *const T = */ rhs_p.as_ptr(),
+                            /* rhs_cs: isize = */ rhs_cs as isize,
+                            /* rhs_rs: isize = */ rhs_rs as isize,
+                            /* alpha: T = */ alpha,
+                            /* beta: T = */ beta,
+                            /* conj_dst: bool = */ false,
+                            /* conj_lhs: bool = */ false,
+                            /* conj_rhs: bool = */ false,
+                            parallelism,
+                        )
+                    }
+                }
+            }
+        }
+    };
+    // SIMD-accelerated gemm using SimdSupported for vectorized operations along 'n' dimension
+    ($rt:ident, $init:expr, SIMD) => {
+        impl GemmDispatch for $rt {
+            fn launch_gemm(
+                lhs: &[Self],
+                rhs: &[Self],
+                b: usize,
+                m: usize,
+                n: usize,
+                k: usize,
+                out: &mut Vec<Self>,
+                alpha: Self,
+                beta: Self,
+            ) where
+                Self: Sized,
+            {
+                use crate::dtype::SimdSupported;
+                use crate::graph::BinaryOpType;
+                const BLOCK_SIZE: usize = <$rt as SimdSupported>::BLOCK_SIZE;
+                let n_blocks = n / BLOCK_SIZE;
+                let rem = n % BLOCK_SIZE;
+
+                debug_assert_eq!(lhs.len(), b * m * k);
+                debug_assert_eq!(rhs.len(), b * k * n);
+                debug_assert_eq!(out.len(), b * m * n);
+
+                for batch in 0..b {
+                    // Compute base pointers once per batch
+                    let lhs_base = unsafe { lhs.as_ptr().add(batch * m * k) };
+                    let rhs_base = unsafe { rhs.as_ptr().add(batch * k * n) };
+                    let out_base = unsafe { out.as_mut_ptr().add(batch * m * n) };
+
+                    for i in 0..m {
+                        // Pointer to the start of the current output row
+                        let out_row_ptr = unsafe { out_base.add(i * n) };
+
+                        // Process full SIMD blocks
+                        for block in 0..n_blocks {
+                            let off = block * BLOCK_SIZE;
+                            let out_ptr = unsafe { out_row_ptr.add(off) };
+                            let out_chunk =
+                                unsafe { std::slice::from_raw_parts_mut(out_ptr, BLOCK_SIZE) };
+
+                            if beta != $init {
+                                let alpha_arr = [alpha; BLOCK_SIZE];
+                                <Self as SimdSupported>::binary_simd_op_inplace_lhs(
+                                    out_chunk,
+                                    &alpha_arr,
+                                    BinaryOpType::Mul,
+                                );
+                            } else {
+                                for x in out_chunk.iter_mut() {
+                                    *x = $init;
+                                }
+                            }
+
+                            for p in 0..k {
+                                let a_val = unsafe { *lhs_base.add(i * k + p) };
+                                let a_arr = [a_val; BLOCK_SIZE];
+                                let b_ptr = unsafe { rhs_base.add(p * n + off) };
+                                let b_chunk =
+                                    unsafe { std::slice::from_raw_parts(b_ptr, BLOCK_SIZE) };
+                                <Self as SimdSupported>::fma_op_inplace_c(
+                                    &a_arr, b_chunk, out_chunk,
+                                );
+                            }
+                        }
+
+                        // Handle remainder elements
+                        if rem > 0 {
+                            let off = n_blocks * BLOCK_SIZE;
+                            let out_ptr = unsafe { out_row_ptr.add(off) };
+                            let out_chunk = unsafe { std::slice::from_raw_parts_mut(out_ptr, rem) };
+
+                            if beta != $init {
+                                for x in out_chunk.iter_mut() {
+                                    *x *= alpha;
+                                }
+                            } else {
+                                for x in out_chunk.iter_mut() {
+                                    *x = $init;
+                                }
+                            }
+
+                            for p in 0..k {
+                                let a_val = unsafe { *lhs_base.add(i * k + p) };
+                                for j in 0..rem {
+                                    let b_val = unsafe { *rhs_base.add(p * n + off + j) };
+                                    out_chunk[j] += a_val * b_val;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+instantiate_gemm!(u8, 0, SIMD);
+instantiate_gemm!(u32, 0, SIMD);
+instantiate_gemm!(i32, 0, SIMD);
+instantiate_gemm!(i64, 0, SIMD);
+instantiate_gemm!(f32, 0., GEMM);
+instantiate_gemm!(f64, 0., GEMM);
+#[cfg(feature = "bfloat")]
+instantiate_gemm!(bf16, bf16::from_f32(0.), SIMD);
+#[cfg(feature = "half")]
+instantiate_gemm!(f16, f16::from_f32(0.), GEMM);
