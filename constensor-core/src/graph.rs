@@ -5,13 +5,14 @@ use std::{
     fmt::Display,
     fs,
     hash::Hash,
+    marker::PhantomData,
     path::Path,
     process::Command,
     rc::Rc,
     sync::{Arc, RwLock, RwLockReadGuard},
 };
 
-use crate::{DType, Result, Shape};
+use crate::{device::Dev, tensor::concretetensor::from_storage, DType, Result, Shape, Tensor};
 
 use petgraph::Graph as PetGraph;
 use petgraph::{dot::Dot, graph::NodeIndex};
@@ -440,6 +441,51 @@ impl<T: DType> Graph<T> {
         self.optimize_inplace_bin();
         self.optimize_inplace_fma();
         self.optimize_inplace_matmul();
+    }
+
+    pub fn compile<S: Shape, D: Dev>(self) -> Result<CompiledGraph<S, T, D>> {
+        if self
+            .data
+            .read()
+            .unwrap()
+            .last()
+            .is_some_and(|last| last.shape != S::shape())
+        {
+            let read = self.data.read();
+            let last = read.as_ref().unwrap().last().unwrap();
+
+            crate::bail!(
+                "Graph compiled shape is {:?} does not match the last node shape {:?}!",
+                &last.shape,
+                S::shape()
+            );
+        }
+
+        let device = D::resolve()?;
+
+        device.compile(self.data.read().unwrap().clone())
+    }
+}
+
+/// A representation of the compiled graph. The shape is the output shape.
+pub enum CompiledGraph<S: Shape, T: DType, D: Dev> {
+    Cpu {
+        order: Vec<usize>,
+        graph: Vec<GraphNode<T>>,
+        ghost: PhantomData<(S, T, D)>,
+    },
+    #[cfg(feature = "cuda")]
+    Cuda {
+        kernels: Vec<crate::cuda_backend::CudaCompiledKernel<T>>,
+        ghost: PhantomData<(S, T, D)>,
+    },
+}
+
+impl<S: Shape, T: DType, D: Dev> CompiledGraph<S, T, D> {
+    pub fn run(&self) -> Result<Tensor<S, T, D>> {
+        let device = D::resolve()?;
+        let storage = device.run_graph(self)?;
+        Ok(from_storage(Arc::new(storage)))
     }
 }
 
