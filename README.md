@@ -20,6 +20,7 @@ Constensor is a fast ML framework which provides the following key features:
   - Constant folding
   - Dead code removal
 
+You can find out more with the [DeepWiki page](https://deepwiki.com/EricLBuehler/constensor)!
 
 ```rust
 use constensor_core::{Cpu, Graph, GraphTensor, Tensor, R2};
