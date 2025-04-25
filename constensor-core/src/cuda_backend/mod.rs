@@ -13,7 +13,7 @@ use std::sync::{
 };
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     hash::{DefaultHasher, Hash, Hasher},
     marker::PhantomData,
@@ -24,7 +24,7 @@ use std::{
 use crate::{
     cpu_storage::CpuStorage,
     device::Dev,
-    storage::{BackendDevice, BackendStorage},
+    storage::{BackendDevice, BackendStorage, Storage},
     CompiledGraph, DType, GraphNode, Op, Result, Shape,
 };
 
@@ -38,10 +38,13 @@ unsafe impl Send for CudaRng {}
 pub struct CudaDevice {
     context: Arc<cudarc::driver::CudaContext>,
     stream: Arc<cudarc::driver::CudaStream>,
-    modules: Arc<RwLock<Vec<Arc<CudaModule>>>>,
+    modules: Arc<RwLock<HashMap<String, Arc<CudaModule>>>>,
+    module_cache_order: Arc<Mutex<VecDeque<String>>>,
     streams: Arc<Vec<Arc<CudaStream>>>,
     stream_index: Arc<AtomicUsize>,
 }
+
+const MAX_CACHED_KERNELS: usize = 128;
 
 impl CudaDevice {
     pub(crate) fn new(ordinal: usize) -> Result<Self> {
@@ -57,7 +60,8 @@ impl CudaDevice {
         Ok(Self {
             context,
             stream,
-            modules: Arc::new(RwLock::new(vec![])),
+            modules: Arc::new(RwLock::new(HashMap::new())),
+            module_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             streams,
             stream_index,
         })
@@ -74,9 +78,29 @@ impl CudaDevice {
     }
 
     pub(crate) fn load_func(&self, function_name: &str, ptx: Ptx) -> Result<CudaFunction> {
+        // If we've already loaded this kernel, skip reloading
+        {
+            let modules_read = self.modules.read().unwrap();
+            if let Some(module) = modules_read.get(function_name) {
+                return module.load_function(function_name).w();
+            }
+        }
+
+        // Otherwise compile and load
         let module = self.context.load_module(ptx).w()?;
         let func = module.load_function(function_name).w()?;
-        self.modules.write().unwrap().push(module);
+        // Insert into cache and cap size
+        {
+            let mut modules_write = self.modules.write().unwrap();
+            let mut order = self.module_cache_order.lock().unwrap();
+            modules_write.insert(function_name.to_string(), module.clone());
+            order.push_back(function_name.to_string());
+            if order.len() > MAX_CACHED_KERNELS {
+                if let Some(old) = order.pop_front() {
+                    modules_write.remove(&old);
+                }
+            }
+        }
         Ok(func)
     }
 }
@@ -99,6 +123,77 @@ impl<T: DType> BackendStorage<T> for CudaStorage<T> {
     fn to_cpu_storage(&self) -> Result<Cow<CpuStorage<T>>> {
         let data = self.device.stream().memcpy_dtov(&self.slice).w()?;
         Ok(Cow::Owned(CpuStorage(data)))
+    }
+    fn cast<U: DType>(&self) -> Result<Storage<U>> {
+        let function_name = format!("cast_{}_to_{}", T::NAME, U::NAME);
+
+        let template_kernel = format!(
+            r#"
+            typedef unsigned char uint8_t;
+            typedef unsigned int uint32_t;
+            typedef long long int int64_t;
+            {}
+            {}
+
+            template <typename T, typename U>
+            __device__ void {function_name}_kernel(T *in, U *out, const size_t numel) {{
+                for (unsigned int i = blockIdx.x * blockDim.x + threadIdx.x; i < numel;
+                    i += blockDim.x * gridDim.x) {{
+                    out[i] = static_cast<U>(in[i]);
+                }}
+            }}
+            
+            extern "C" __global__ void {function_name}({} *in, {} *out, const size_t numel) {{
+                {function_name}_kernel(in, out, numel);
+            }}
+
+            "#,
+            T::C_DEP.unwrap_or(""),
+            U::C_DEP.unwrap_or(""),
+            T::C_NAME,
+            U::C_NAME,
+        );
+
+        // Always recompile PTX to avoid using stale cached files
+        let ptx = compile_ptx(template_kernel.clone())?;
+
+        let ptx_str = ptx.to_src();
+        if let Some(home) = dirs::home_dir() {
+            let path = format!(
+                "{}/.cache/constensor/ptx/{function_name}.ptx",
+                home.display()
+            );
+            let path = Path::new(&path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(path, ptx_str)?;
+        }
+
+        let stream = self.device.select_stream();
+        let n_elems = self.slice.len();
+
+        let out = unsafe { stream.alloc::<U>(n_elems) }.w()?;
+
+        let func = self.device.load_func(&function_name, ptx)?;
+
+        let cfg = LaunchConfig::for_num_elems(n_elems as u32);
+
+        let mut builder = stream.launch_builder(&func);
+        builder.arg(&self.slice);
+        builder.arg(&out);
+        builder.arg(&n_elems);
+        unsafe { builder.launch(cfg).w()? };
+
+        // Record an event once this kernel completes
+        let event = self.device.context.new_event(None).w()?;
+        event.record(&stream).w()?;
+
+        Ok(Storage::Cuda(CudaStorage {
+            slice: out,
+            device: self.device.clone(),
+            event,
+        }))
     }
 }
 
@@ -250,6 +345,7 @@ fn cuda_include_dir() -> Option<PathBuf> {
 fn compile_ptx(template_kernel: String) -> Result<Ptx> {
     cudarc::nvrtc::compile_ptx_with_opts(
         template_kernel,
+        // Compile PTX without hardcoding an architecture so it can JIT to the current device
         CompileOptions {
             use_fast_math: Some(true),
             include_paths: vec![cuda_include_dir()
@@ -257,7 +353,6 @@ fn compile_ptx(template_kernel: String) -> Result<Ptx> {
                 .join("include")
                 .display()
                 .to_string()],
-            arch: Some("sm_90"),
             ..Default::default()
         },
     )
@@ -303,6 +398,14 @@ impl CudaDevice {
         body.hash(&mut hasher);
         header.hash(&mut hasher);
         let function_name = format!("jit_kernel_{}_{}", hasher.finish(), T::NAME);
+
+        // If we've already compiled this kernel, skip PTX compilation
+        if let Some(module) = self.modules.read().unwrap().get(&function_name) {
+            let func = module.load_function(&function_name).w()?;
+            let n_elems: usize = shape.iter().product();
+            let data = unsafe { self.stream.alloc::<T>(n_elems) }.w()?;
+            return Ok((func, data));
+        }
 
         let template_kernel = format!(
             r#"
