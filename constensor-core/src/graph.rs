@@ -21,6 +21,8 @@ use petgraph::{dot::Dot, graph::NodeIndex};
 pub struct GraphNode<T: DType> {
     pub op: Op<T>,
     pub shape: Vec<usize>,
+    pub strides: Vec<usize>,
+    pub id: GraphTensorId,
 }
 
 #[derive(Clone)]
@@ -44,10 +46,12 @@ impl<T: DType> Graph<T> {
     }
 
     /// Append an operation to the graph
-    pub(crate) fn add_op<S: Shape>(&self, op: Op<T>) {
+    pub(crate) fn add_op<S: Shape>(&self, op: Op<T>, strides: &[usize], id: &GraphTensorId) {
         self.data.write().unwrap().push(GraphNode {
             op,
             shape: S::shape(),
+            strides: strides.to_vec(),
+            id: id.clone(),
         });
     }
 
@@ -88,6 +92,7 @@ impl<T: DType> Graph<T> {
                         Op::FusedMulAdd { .. } => "FMA".to_string(),
                         // Matrix multiplication
                         Op::MatMul { .. } => "MatMul".to_string(),
+                        Op::Permute { v_id: _ } => "Permute".to_string(),
                         // we already matched NoOp above
                         Op::NoOp => unreachable!(),
                     };
@@ -170,6 +175,15 @@ impl<T: DType> Graph<T> {
                         }
                     }
                 }
+                Op::Permute { v_id, .. } => {
+                    if let Some(src) = idx_map[v_id.get()] {
+                        let mut label = "v".to_string();
+                        if v_id.is_inplace() {
+                            label.push('*');
+                        }
+                        g.add_edge(src, dst, label.clone());
+                    }
+                }
                 // NoOp, Fill/Arange, Rand/Randn don’t create incoming edges
                 Op::NoOp | Op::Fill { .. } | Op::Arange { .. } | Op::Rand | Op::Randn { .. } => {}
             }
@@ -232,7 +246,7 @@ impl<T: DType> Graph<T> {
                             let v = operator.as_closure()(*v1, *v2);
                             new_ops[i] = GraphNode {
                                 op: Op::Fill { v },
-                                shape: node.shape.clone(),
+                                ..node.clone()
                             };
                         }
                     }
@@ -244,7 +258,7 @@ impl<T: DType> Graph<T> {
                         let v = operator.to_closure()(*v0);
                         new_ops[i] = GraphNode {
                             op: Op::Fill { v },
-                            shape: node.shape.clone(),
+                            ..node.clone()
                         };
                     }
                 }
@@ -285,11 +299,11 @@ impl<T: DType> Graph<T> {
                                 b_id: b_id.clone(),
                                 c_id: rhs_add.clone(),
                             },
-                            shape: x.shape.clone(),
+                            ..x.clone()
                         };
                         new_ops[x_id] = GraphNode {
                             op: Op::NoOp,
-                            shape: x.shape.clone(),
+                            ..x.clone()
                         };
 
                         // Look for ops which actually use this one
@@ -313,7 +327,13 @@ impl<T: DType> Graph<T> {
                                 } => {
                                     vec![a_id, b_id, c_id]
                                 }
-                                Op::MatMul { l_id, r_id, .. } => vec![l_id, r_id],
+                                Op::MatMul {
+                                    l_id, r_id, o_id, ..
+                                } => o_id
+                                    .as_ref()
+                                    .map(|o| vec![l_id, r_id, o])
+                                    .unwrap_or(vec![l_id, r_id]),
+                                Op::Permute { v_id } => vec![v_id],
                                 Op::NoOp => vec![],
                             };
 
@@ -363,9 +383,17 @@ impl<T: DType> Graph<T> {
                     *usage.entry(b_id.clone()).or_default() += 1;
                     *usage.entry(c_id.clone()).or_default() += 1;
                 }
-                Op::MatMul { l_id, r_id, .. } => {
+                Op::MatMul {
+                    l_id, r_id, o_id, ..
+                } => {
                     *usage.entry(l_id.clone()).or_default() += 1;
                     *usage.entry(r_id.clone()).or_default() += 1;
+                    if let Some(o_id) = o_id {
+                        *usage.entry(o_id.clone()).or_default() += 1;
+                    }
+                }
+                Op::Permute { v_id } => {
+                    *usage.entry(v_id.clone()).or_default() += 1;
                 }
                 // No input usage for these ops
                 Op::NoOp | Op::Fill { .. } | Op::Arange { .. } | Op::Rand | Op::Randn { .. } => {}
@@ -404,7 +432,7 @@ impl<T: DType> Graph<T> {
                             r_id: r_id.clone().to_inplace_if(&target == r_id),
                             operator: *operator,
                         },
-                        shape: op.shape.clone(),
+                        ..op.clone()
                     };
                 }
             }
@@ -437,7 +465,7 @@ impl<T: DType> Graph<T> {
                             b_id: b_id.clone().to_inplace_if(&out == b_id),
                             c_id: c_id.clone().to_inplace_if(&out == c_id),
                         },
-                        shape: op.shape.clone(),
+                        ..op.clone()
                     };
                 }
             }
@@ -474,7 +502,7 @@ impl<T: DType> Graph<T> {
                             alpha: *alpha,
                             beta: *beta,
                         },
-                        shape: op.shape.clone(),
+                        ..op.clone()
                     };
                 }
             }
@@ -520,7 +548,14 @@ impl<T: DType> Graph<T> {
                             keep[o_id.get()] = true;
                         }
                     }
-                    _ => {}
+                    Op::Permute { v_id, .. } => {
+                        keep[v_id.get()] = true;
+                    }
+                    Op::NoOp
+                    | Op::Fill { .. }
+                    | Op::Arange { .. }
+                    | Op::Rand
+                    | Op::Randn { .. } => (),
                 }
             }
         }
@@ -734,6 +769,10 @@ pub enum Op<T: DType> {
     Randn {
         mean: T,
         std: T,
+    },
+    // Permutation operator.
+    Permute {
+        v_id: GraphTensorId,
     },
     NoOp,
 }

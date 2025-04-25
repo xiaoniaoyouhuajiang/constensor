@@ -13,7 +13,7 @@ use std::sync::{
 };
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     fs,
     hash::{DefaultHasher, Hash, Hasher},
     marker::PhantomData,
@@ -25,6 +25,7 @@ use crate::{
     cpu_storage::CpuStorage,
     device::Dev,
     storage::{BackendDevice, BackendStorage, Storage},
+    tensor::contiguous_strides,
     CompiledGraph, DType, GraphNode, Op, Result, Shape,
 };
 
@@ -211,6 +212,9 @@ pub enum CudaCompiledKernel<T: DType> {
         r_id: usize,
         /// Optional output tensor ID for axpby semantics
         o_id: Option<usize>,
+        l_stride: Vec<usize>,
+        r_stride: Vec<usize>,
+        o_stride: Option<Vec<usize>>,
         b: usize,
         m: usize,
         n: usize,
@@ -304,6 +308,10 @@ fn handle_node<T: DType>(
             format!("( static_cast<T>(fma(static_cast<double>({a_name}), static_cast<double>({b_name}), static_cast<double>({c_name}))))")
         }
         Op::NoOp => unreachable!("no-op ops should never be reached."),
+        Op::Permute { v_id } => {
+            let name = handle_node(current_name, header, &graph[v_id.get()], graph);
+            format!("({})", name)
+        }
         Op::MatMul { .. } | Op::Rand | Op::Randn { .. } => {
             unreachable!("op should have its own split!")
         }
@@ -468,7 +476,7 @@ impl BackendDevice for CudaDevice {
     ) -> Result<CompiledGraph<S, T, D>> {
         // Build a dependency graph of tensor indices
         let mut dep_graph = DiGraphMap::<usize, ()>::new();
-        for idx in 0..graph.len() {
+        for idx in graph.iter().map(|node| node.id.get()) {
             dep_graph.add_node(idx);
         }
 
@@ -486,9 +494,17 @@ impl BackendDevice for CudaDevice {
                     dep_graph.add_edge(b_id.get(), idx, ());
                     dep_graph.add_edge(c_id.get(), idx, ());
                 }
-                Op::MatMul { l_id, r_id, .. } => {
+                Op::MatMul {
+                    l_id, r_id, o_id, ..
+                } => {
                     dep_graph.add_edge(l_id.get(), idx, ());
                     dep_graph.add_edge(r_id.get(), idx, ());
+                    if let Some(o_id) = o_id {
+                        dep_graph.add_edge(o_id.get(), idx, ());
+                    }
+                }
+                Op::Permute { v_id } => {
+                    dep_graph.add_edge(v_id.get(), idx, ());
                 }
                 // These don’t create incoming edges
                 Op::NoOp | Op::Fill { .. } | Op::Rand | Op::Randn { .. } | Op::Arange { .. } => {}
@@ -502,20 +518,6 @@ impl BackendDevice for CudaDevice {
         let mut kernels = Vec::<CudaCompiledKernel<T>>::new();
         let mut matmuls = Vec::<CudaCompiledKernel<T>>::new();
         let mut splits: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
-        // Collect all matmul input node indices
-        let mut matmul_inputs = HashSet::new();
-        for &idx in &order {
-            if let Op::MatMul {
-                l_id, r_id, o_id, ..
-            } = &graph[idx].op
-            {
-                matmul_inputs.insert(l_id.get());
-                matmul_inputs.insert(r_id.get());
-                if let Some(o_id) = o_id {
-                    matmul_inputs.insert(o_id.get());
-                }
-            }
-        }
 
         for &idx in &order {
             match &graph[idx].op {
@@ -529,8 +531,12 @@ impl BackendDevice for CudaDevice {
                 } => {
                     let l_shape = &graph[l_id.get()].shape;
                     let r_shape = &graph[r_id.get()].shape;
+                    let l_stride = &graph[l_id.get()].strides;
+                    let r_stride = &graph[r_id.get()].strides;
                     assert_eq!(l_shape.len(), 3);
                     assert_eq!(r_shape.len(), 3);
+                    assert_eq!(l_stride.len(), 3);
+                    assert_eq!(r_stride.len(), 3);
                     let (b, m, _k) = (l_shape[0], l_shape[1], l_shape[2]);
                     let n = r_shape[2];
 
@@ -542,6 +548,9 @@ impl BackendDevice for CudaDevice {
                         l_id: l_id.get(),
                         r_id: r_id.get(),
                         o_id: o_id.as_ref().map(|id| id.get()),
+                        l_stride: l_stride.clone(),
+                        r_stride: r_stride.clone(),
+                        o_stride: o_id.as_ref().map(|id| graph[id.get()].strides.clone()),
                         b,
                         m,
                         n,
@@ -583,11 +592,32 @@ impl BackendDevice for CudaDevice {
                 }
                 _ => {
                     let shape_key = graph[idx].shape.clone();
+                    // Group only when same shape and this op depends on the last split node
                     let should_group = if let Some((last_group, _)) = splits.last_mut() {
                         let last_idx = *last_group.last().unwrap();
-                        let last_shape_key = graph[last_idx].shape.clone();
-                        // Force all matmul inputs to have their own
-                        last_shape_key == shape_key && !matmul_inputs.contains(&idx)
+                        if graph[last_idx].shape == shape_key {
+                            match &graph[idx].op {
+                                Op::BinaryOp { l_id, r_id, .. } => {
+                                    l_id.get() == last_idx || r_id.get() == last_idx
+                                }
+                                Op::UnaryOp { v_id, .. } => v_id.get() == last_idx,
+                                Op::FusedMulAdd { a_id, b_id, c_id } => {
+                                    a_id.get() == last_idx
+                                        || b_id.get() == last_idx
+                                        || c_id.get() == last_idx
+                                }
+                                Op::Permute { v_id } => v_id.get() == last_idx,
+                                // Init ops always start new group
+                                Op::NoOp
+                                | Op::Fill { .. }
+                                | Op::Arange { .. }
+                                | Op::Rand
+                                | Op::Randn { .. }
+                                | Op::MatMul { .. } => false,
+                            }
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     };
@@ -654,6 +684,9 @@ impl BackendDevice for CudaDevice {
                     l_id,
                     r_id,
                     o_id,
+                    l_stride,
+                    r_stride,
+                    o_stride,
                     b,
                     m,
                     n,
@@ -672,7 +705,7 @@ impl BackendDevice for CudaDevice {
                     lhs.event.synchronize().w()?;
                     rhs.event.synchronize().w()?;
 
-                    let elems = m * n;
+                    let elems = b * m * n;
                     // prepare output buffer, copy initial if provided
                     let mut out = unsafe { stream.alloc::<T>(elems) }.w()?;
                     if let Some(o_idx) = o_id {
@@ -682,9 +715,14 @@ impl BackendDevice for CudaDevice {
                         self.stream().memcpy_dtod(&init.slice, &mut out).w()?;
                     }
 
+                    let o_stride = o_stride
+                        .clone()
+                        .unwrap_or(contiguous_strides(&[*b, *m, *n]));
+
                     // Launch GEMM on the pooled stream
                     T::launch_gemm_cuda(
-                        cublas, &lhs.slice, &rhs.slice, *b, *m, *n, *k, &mut out, *beta, *alpha,
+                        cublas, &lhs.slice, &rhs.slice, l_stride, r_stride, *b, *m, *n, *k,
+                        &mut out, &o_stride, *beta, *alpha,
                     )?;
 
                     // Record completion event for the MatMul result

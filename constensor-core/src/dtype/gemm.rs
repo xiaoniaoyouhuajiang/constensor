@@ -13,12 +13,15 @@ pub trait GemmDispatch {
     // Matrix multiplication: (B x M x K) * (B x K x N) = (B x M x N)
     fn launch_gemm(
         lhs: &[Self],
+        lhs_stride: &[usize],
         rhs: &[Self],
+        rhs_stride: &[usize],
         b: usize,
         m: usize,
         n: usize,
         k: usize,
         out: &mut Vec<Self>,
+        out_stride: &[usize],
         alpha: Self,
         beta: Self,
     ) where
@@ -31,11 +34,14 @@ pub trait GemmDispatch {
         cublas: &cudarc::cublas::CudaBlas,
         lhs: &cudarc::driver::CudaSlice<Self>,
         rhs: &cudarc::driver::CudaSlice<Self>,
+        lhs_stride: &[usize],
+        rhs_stride: &[usize],
         b: usize,
         m: usize,
         n: usize,
         k: usize,
         out: &mut cudarc::driver::CudaSlice<Self>,
+        out_stride: &[usize],
         alpha: Self,
         beta: Self,
     ) -> crate::Result<()>
@@ -63,11 +69,14 @@ macro_rules! instantiate_gemm_cuda {
             _cublas: &cudarc::cublas::CudaBlas,
             _lhs: &cudarc::driver::CudaSlice<Self>,
             _rhs: &cudarc::driver::CudaSlice<Self>,
+            _lhs_stride: &[usize],
+            _rhs_stride: &[usize],
             _b: usize,
             _m: usize,
             _n: usize,
             _k: usize,
             _out: &mut cudarc::driver::CudaSlice<Self>,
+            _out_stride: &[usize],
             _alpha: Self,
             _beta: Self,
         ) -> crate::Result<()>
@@ -84,18 +93,28 @@ macro_rules! instantiate_gemm_cuda {
             cublas: &cudarc::cublas::CudaBlas,
             lhs: &cudarc::driver::CudaSlice<$rt>,
             rhs: &cudarc::driver::CudaSlice<$rt>,
+            lhs_stride: &[usize],
+            rhs_stride: &[usize],
             b: usize,
             m: usize,
             n: usize,
             k: usize,
             out: &mut cudarc::driver::CudaSlice<$rt>,
+            out_stride: &[usize],
             alpha: $rt,
             beta: $rt,
         ) -> crate::Result<()> {
             use crate::cuda_backend::error::WrapErr;
             use cudarc::cublas::Gemm;
 
-            let gemm_cfg = crate::cuda_backend::util::gemm_config(alpha, beta, (b, m, n, k))?;
+            let gemm_cfg = crate::cuda_backend::util::gemm_config(
+                alpha,
+                beta,
+                (b, m, n, k),
+                lhs_stride,
+                rhs_stride,
+                out_stride,
+            )?;
 
             unsafe {
                 cublas
@@ -118,26 +137,43 @@ macro_rules! instantiate_gemm {
         impl GemmDispatch for $rt {
             fn launch_gemm(
                 lhs: &[Self],
+                lhs_stride: &[usize],
                 rhs: &[Self],
+                rhs_stride: &[usize],
                 b: usize,
                 m: usize,
                 n: usize,
                 k: usize,
                 out: &mut Vec<Self>,
+                out_stride: &[usize],
                 alpha: Self,
                 beta: Self,
             ) where
                 Self: Sized,
             {
-                for b in 0..b {
+                let lhs_bs = lhs_stride[0];
+                let lhs_rs = lhs_stride[1];
+                let lhs_cs = lhs_stride[2];
+
+                let rhs_bs = rhs_stride[0];
+                let rhs_rs = rhs_stride[1];
+                let rhs_cs = rhs_stride[2];
+
+                let out_bs = out_stride[0];
+                let out_rs = out_stride[1];
+                let out_cs = out_stride[2];
+
+                for batch_idx in 0..b {
                     for i in 0..m {
                         for j in 0..n {
                             let mut sum = $init;
                             for p in 0..k {
-                                sum +=
-                                    beta * lhs[b * m * k + i * k + p] * rhs[b * k * n + p * n + j];
+                                let lhs_val = lhs[batch_idx * lhs_bs + i * lhs_rs + p * lhs_cs];
+                                let rhs_val = rhs[batch_idx * rhs_bs + p * rhs_rs + j * rhs_cs];
+                                sum += beta * lhs_val * rhs_val;
                             }
-                            out[b * m * n + i * n + j] = alpha * out[b * m * n + i * n + j] + sum;
+                            let out_idx = batch_idx * out_bs + i * out_rs + j * out_cs;
+                            out[out_idx] = alpha * out[out_idx] + sum;
                         }
                     }
                 }
@@ -151,12 +187,15 @@ macro_rules! instantiate_gemm {
         impl GemmDispatch for $rt {
             fn launch_gemm(
                 lhs: &[Self],
+                lhs_stride: &[usize],
                 rhs: &[Self],
+                rhs_stride: &[usize],
                 b: usize,
                 m: usize,
                 n: usize,
                 k: usize,
                 out: &mut Vec<Self>,
+                out_stride: &[usize],
                 alpha: Self,
                 beta: Self,
             ) where
@@ -169,15 +208,22 @@ macro_rules! instantiate_gemm {
                     Parallelism::None
                 };
 
+                debug_assert_eq!(lhs.len(), b * m * k);
+                debug_assert_eq!(lhs_stride.len(), 3);
+                debug_assert_eq!(rhs.len(), b * k * n);
+                debug_assert_eq!(rhs_stride.len(), 3);
+                debug_assert_eq!(out.len(), b * m * n);
+                debug_assert_eq!(out_stride.len(), 3);
+
                 // cs = stride[-1], rs = stride[-2]
-                let dst_cs = 1;
-                let dst_rs = n;
+                let dst_cs = out_stride[2];
+                let dst_rs = out_stride[1];
 
-                let lhs_cs = 1;
-                let lhs_rs = k;
+                let lhs_cs = lhs_stride[2];
+                let lhs_rs = lhs_stride[1];
 
-                let rhs_cs = 1;
-                let rhs_rs = n;
+                let rhs_cs = rhs_stride[2];
+                let rhs_rs = rhs_stride[1];
 
                 let read_dst = alpha != $zero;
 
@@ -220,12 +266,15 @@ macro_rules! instantiate_gemm {
         impl GemmDispatch for $rt {
             fn launch_gemm(
                 lhs: &[Self],
+                lhs_stride: &[usize],
                 rhs: &[Self],
+                rhs_stride: &[usize],
                 b: usize,
                 m: usize,
                 n: usize,
                 k: usize,
                 out: &mut Vec<Self>,
+                out_stride: &[usize],
                 alpha: Self,
                 beta: Self,
             ) where
@@ -237,24 +286,39 @@ macro_rules! instantiate_gemm {
                 let n_blocks = n / BLOCK_SIZE;
                 let rem = n % BLOCK_SIZE;
 
+                let lhs_bs = lhs_stride[0];
+                let lhs_rs = lhs_stride[1];
+                let lhs_cs = lhs_stride[2];
+
+                let rhs_bs = rhs_stride[0];
+                let rhs_rs = rhs_stride[1];
+                let rhs_cs = rhs_stride[2];
+
+                let out_bs = out_stride[0];
+                let out_rs = out_stride[1];
+                let out_cs = out_stride[2];
+
                 debug_assert_eq!(lhs.len(), b * m * k);
+                debug_assert_eq!(lhs_stride.len(), 3);
                 debug_assert_eq!(rhs.len(), b * k * n);
+                debug_assert_eq!(rhs_stride.len(), 3);
                 debug_assert_eq!(out.len(), b * m * n);
+                debug_assert_eq!(out_stride.len(), 3);
 
                 for batch in 0..b {
                     // Compute base pointers once per batch
-                    let lhs_base = unsafe { lhs.as_ptr().add(batch * m * k) };
-                    let rhs_base = unsafe { rhs.as_ptr().add(batch * k * n) };
-                    let out_base = unsafe { out.as_mut_ptr().add(batch * m * n) };
+                    let lhs_base = unsafe { lhs.as_ptr().add(batch * lhs_bs) };
+                    let rhs_base = unsafe { rhs.as_ptr().add(batch * rhs_bs) };
+                    let out_base = unsafe { out.as_mut_ptr().add(batch * out_bs) };
 
                     for i in 0..m {
                         // Pointer to the start of the current output row
-                        let out_row_ptr = unsafe { out_base.add(i * n) };
+                        let out_row_ptr = unsafe { out_base.add(i * out_rs) };
 
                         // Process full SIMD blocks
                         for block in 0..n_blocks {
                             let off = block * BLOCK_SIZE;
-                            let out_ptr = unsafe { out_row_ptr.add(off) };
+                            let out_ptr = unsafe { out_row_ptr.add(off * out_cs) };
                             let out_chunk =
                                 unsafe { std::slice::from_raw_parts_mut(out_ptr, BLOCK_SIZE) };
 
@@ -272,9 +336,9 @@ macro_rules! instantiate_gemm {
                             }
 
                             for p in 0..k {
-                                let a_val = unsafe { *lhs_base.add(i * k + p) };
+                                let a_val = unsafe { *lhs_base.add(i * lhs_rs + p * lhs_cs) };
                                 let a_arr = [a_val; BLOCK_SIZE];
-                                let b_ptr = unsafe { rhs_base.add(p * n + off) };
+                                let b_ptr = unsafe { rhs_base.add(p * rhs_rs + off * rhs_cs) };
                                 let b_chunk =
                                     unsafe { std::slice::from_raw_parts(b_ptr, BLOCK_SIZE) };
                                 <Self as SimdSupported>::fma_op_inplace_c(
@@ -286,7 +350,7 @@ macro_rules! instantiate_gemm {
                         // Handle remainder elements
                         if rem > 0 {
                             let off = n_blocks * BLOCK_SIZE;
-                            let out_ptr = unsafe { out_row_ptr.add(off) };
+                            let out_ptr = unsafe { out_row_ptr.add(off * out_cs) };
                             let out_chunk = unsafe { std::slice::from_raw_parts_mut(out_ptr, rem) };
 
                             if beta != $init {
@@ -300,9 +364,10 @@ macro_rules! instantiate_gemm {
                             }
 
                             for p in 0..k {
-                                let a_val = unsafe { *lhs_base.add(i * k + p) };
+                                let a_val = unsafe { *lhs_base.add(i * lhs_rs + p * lhs_cs) };
                                 for j in 0..rem {
-                                    let b_val = unsafe { *rhs_base.add(p * n + off + j) };
+                                    let b_val =
+                                        unsafe { *rhs_base.add(p * rhs_rs + (off + j) * rhs_cs) };
                                     out_chunk[j] += a_val * b_val;
                                 }
                             }

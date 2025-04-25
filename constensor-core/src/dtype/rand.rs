@@ -4,11 +4,6 @@ use {
     crate::{cuda_backend::error::WrapErr, Result},
     cudarc::{curand::CudaRng, driver::CudaSlice},
 };
-// Optional half-precision types
-#[cfg(feature = "bfloat")]
-use half::bf16;
-#[cfg(feature = "half")]
-use half::f16;
 
 /// Dispatch random fills based on the data type (CUDA backend).
 pub trait RandDispatch {
@@ -143,7 +138,7 @@ impl RandDispatch for i64 {
     }
 }
 #[cfg(all(feature = "cuda", feature = "half"))]
-impl RandDispatch for f16 {
+impl RandDispatch for half::f16 {
     fn cuda_fill_with_uniform(_rng: &CudaRng, _slice: &mut CudaSlice<Self>) -> Result<()> {
         crate::bail!(
             "Uniform random fill is not supported for dtype {}",
@@ -163,7 +158,7 @@ impl RandDispatch for f16 {
     }
 }
 #[cfg(all(feature = "cuda", feature = "bfloat"))]
-impl RandDispatch for bf16 {
+impl RandDispatch for half::bf16 {
     fn cuda_fill_with_uniform(_rng: &CudaRng, _slice: &mut CudaSlice<Self>) -> Result<()> {
         crate::bail!(
             "Uniform random fill is not supported for dtype {}",
