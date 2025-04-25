@@ -7,7 +7,10 @@ use cudarc::{
 };
 use error::WrapErr;
 use petgraph::{algo::toposort, prelude::DiGraphMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex, RwLock,
+};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -16,7 +19,6 @@ use std::{
     marker::PhantomData,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
 };
 
 use crate::{
@@ -28,6 +30,9 @@ use crate::{
 
 pub(crate) mod error;
 pub(crate) mod util;
+
+pub struct CudaRng(cudarc::curand::CudaRng);
+unsafe impl Send for CudaRng {}
 
 #[derive(Clone)]
 pub struct CudaDevice {
@@ -123,6 +128,20 @@ pub enum CudaCompiledKernel<T: DType> {
         cublas: cudarc::cublas::CudaBlas,
         stream: Arc<CudaStream>,
     },
+    Rand {
+        rng: Arc<Mutex<CudaRng>>,
+        stream: Arc<CudaStream>,
+        elem_count: usize,
+        order: usize,
+    },
+    Randn {
+        mean: T,
+        std: T,
+        rng: Arc<Mutex<CudaRng>>,
+        stream: Arc<CudaStream>,
+        elem_count: usize,
+        order: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -190,7 +209,9 @@ fn handle_node<T: DType>(
             format!("( static_cast<T>(fma(static_cast<double>({a_name}), static_cast<double>({b_name}), static_cast<double>({c_name}))))")
         }
         Op::NoOp => unreachable!("no-op ops should never be reached."),
-        Op::MatMul { .. } => unreachable!("matmul op should have its own split!"),
+        Op::MatMul { .. } | Op::Rand | Op::Randn { .. } => {
+            unreachable!("op should have its own split!")
+        }
     }
 }
 
@@ -366,8 +387,8 @@ impl BackendDevice for CudaDevice {
                     dep_graph.add_edge(l_id.get(), idx, ());
                     dep_graph.add_edge(r_id.get(), idx, ());
                 }
-                // NoOp and Fill/Arange don’t create incoming edges
-                Op::NoOp | Op::Fill { .. } | Op::Arange { .. } => {}
+                // These don’t create incoming edges
+                Op::NoOp | Op::Fill { .. } | Op::Rand | Op::Randn { .. } | Op::Arange { .. } => {}
             }
         }
 
@@ -427,6 +448,34 @@ impl BackendDevice for CudaDevice {
                         beta: *beta,
                         cublas,
                         stream,
+                    });
+                }
+                Op::Rand => {
+                    let stream = self.select_stream();
+                    let curand = Arc::new(Mutex::new(CudaRng(
+                        cudarc::curand::CudaRng::new(0, stream.clone()).w()?,
+                    )));
+
+                    matmuls.push(CudaCompiledKernel::Rand {
+                        rng: curand,
+                        stream,
+                        elem_count: graph[idx].shape.iter().product(),
+                        order: idx,
+                    });
+                }
+                Op::Randn { mean, std } => {
+                    let stream = self.select_stream();
+                    let curand = Arc::new(Mutex::new(CudaRng(
+                        cudarc::curand::CudaRng::new(0, stream.clone()).w()?,
+                    )));
+
+                    matmuls.push(CudaCompiledKernel::Randn {
+                        mean: *mean,
+                        std: *std,
+                        rng: curand,
+                        stream,
+                        elem_count: graph[idx].shape.iter().product(),
+                        order: idx,
                     });
                 }
                 _ => {
@@ -541,6 +590,48 @@ impl BackendDevice for CudaDevice {
 
                     let storage = CudaStorage {
                         slice: out,
+                        device: self.clone(),
+                        event,
+                    };
+                    last_storage.insert(order, storage);
+                }
+                CudaCompiledKernel::Rand {
+                    stream,
+                    rng,
+                    elem_count,
+                    order,
+                } => {
+                    let mut slice = unsafe { stream.alloc::<T>(*elem_count).w()? };
+                    T::cuda_fill_with_uniform(&rng.lock().unwrap().0, &mut slice)?;
+
+                    // Record completion event for the MatMul result
+                    let event = self.context.new_event(None).w()?;
+                    event.record(stream).w()?;
+
+                    let storage = CudaStorage {
+                        slice,
+                        device: self.clone(),
+                        event,
+                    };
+                    last_storage.insert(order, storage);
+                }
+                CudaCompiledKernel::Randn {
+                    mean,
+                    std,
+                    stream,
+                    rng,
+                    elem_count,
+                    order,
+                } => {
+                    let mut slice = unsafe { stream.alloc::<T>(*elem_count).w()? };
+                    T::cuda_fill_with_normal(&rng.lock().unwrap().0, &mut slice, *mean, *std)?;
+
+                    // Record completion event for the MatMul result
+                    let event = self.context.new_event(None).w()?;
+                    event.record(stream).w()?;
+
+                    let storage = CudaStorage {
+                        slice,
                         device: self.clone(),
                         event,
                     };
