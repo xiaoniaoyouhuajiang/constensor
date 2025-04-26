@@ -632,6 +632,7 @@ impl<T: DType> Graph<T> {
         self.optimize_dead_code();
     }
 
+    /// Compile this graph and insert device-specific optimizations such as CUDA streams.
     pub fn compile<S: Shape, D: Dev>(self) -> Result<CompiledGraph<S, T, D>> {
         if self
             .data
@@ -671,6 +672,7 @@ pub enum CompiledGraph<S: Shape, T: DType, D: Dev> {
 }
 
 impl<S: Shape, T: DType, D: Dev> CompiledGraph<S, T, D> {
+    /// Run the precompiled graph. This executes all nodes on the specified backend device and returns a concrete tensor.
     pub fn run(&self) -> Result<Tensor<S, T, D>> {
         let device = D::resolve()?;
         let storage = device.run_graph(self)?;

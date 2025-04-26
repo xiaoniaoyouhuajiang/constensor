@@ -3,14 +3,14 @@
 </h1>
 
 <h3 align="center">
-ML framework featuring compile time checks and accelerated by a JIT compiler.
+Experimental ML framework featuring a graph-based JIT compiler.
 </h3>
 
 <p align="center"><a href="https://docs.rs/constensor/latest/constensor/"><b>Docs</b></a>
 
 </p>
 
-Constensor is a fast ML framework which provides the following key features:
+Constensor is an ML framework which provides the following key features:
 
 - **Compile time shape, dtype, and device checking**: Develop quickly and handle common errors
 - **Opt-in half precision support**: Run on any GPU

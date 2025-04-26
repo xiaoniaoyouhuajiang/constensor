@@ -476,7 +476,7 @@ impl BackendDevice for CudaDevice {
     ) -> Result<CompiledGraph<S, T, D>> {
         // Build a dependency graph of tensor indices
         let mut dep_graph = DiGraphMap::<usize, ()>::new();
-        for idx in graph.iter().map(|node| node.id.get()) {
+        for idx in graph.len() {
             dep_graph.add_node(idx);
         }
 

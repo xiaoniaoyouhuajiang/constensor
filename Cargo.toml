@@ -7,8 +7,8 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "ML framework featuring compile time checks and accelerated by a JIT compiler."
-repository = "TODO"
+description = "Experimental ML framework featuring a graph-based JIT compiler."
+repository = "https://github.com/EricLBuehler/constensor"
 keywords = ["blas", "tensor", "machine-learning"]
 categories = ["science"]
 license = "MIT OR Apache-2.0"

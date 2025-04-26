@@ -41,8 +41,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 impl Error {
     /// Create a new error based on a printable error message.
-    ///
-    /// If the message implements `std::error::Error`, prefer using [`Error::wrap`] instead.
     pub fn msg<M: Display>(msg: M) -> Self {
         Self::Msg(msg.to_string()).bt()
     }
@@ -88,7 +86,7 @@ pub(crate) mod private {
 
 /// Attach more context to an error.
 ///
-/// Inspired by [`anyhow::Context`].
+/// Inspired by `anyhow::Context`.
 pub trait Context<T, E>: private::Sealed {
     /// Wrap the error value with additional context.
     fn context<C>(self, context: C) -> std::result::Result<T, Error>
