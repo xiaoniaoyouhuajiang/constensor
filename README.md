@@ -1,6 +1,6 @@
 # constensor
 
-[![Crates.io](https://img.shields.io/crates/v/constensor-core.svg)](https://crates.io/crates/constensor-core) [![docs.rs](https://docs.rs/constensor-core/badge.svg)](https://docs.rs/constensor-core) [![CI](https://github.com/EricLBuehler/constensor/actions/workflows/ci.yml/badge.svg)](https://github.com/EricLBuehler/constensor/actions) [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/constensor-core.svg)](https://crates.io/crates/constensor-core) [![docs.rs](https://docs.rs/constensor-core/badge.svg)](https://docs.rs/constensor-core) [![CI](https://github.com/EricLBuehler/constensor/actions/workflows/ci.yml/badge.svg)](https://github.com/EricLBuehler/constensor/actions) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Experimental machine learning framework featuring a graph-based JIT compiler.
 
