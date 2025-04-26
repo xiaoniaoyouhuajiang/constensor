@@ -35,8 +35,6 @@
 //!
 //! graph.optimize();
 //!
-//! graph.visualize("graph.png").unwrap();
-//!
 //! let compiled: constensor_core::CompiledGraph<R2<3, 4>, f32, Cpu> = graph.compile().unwrap();
 //! let res = compiled.run().unwrap();
 //!
