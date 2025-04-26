@@ -6,7 +6,7 @@
 Experimental ML framework featuring a graph-based JIT compiler.
 </h3>
 
-<p align="center"><a href="https://docs.rs/constensor/latest/constensor/"><b>Docs</b></a>
+<p align="center"><a href="https://docs.rs/constensor-core/latest/constensor_core/"><b>Docs</b></a>
 
 </p>
 
