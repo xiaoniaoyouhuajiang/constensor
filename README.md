@@ -6,7 +6,7 @@
 ML framework featuring compile time checks and accelerated by a JIT compiler.
 </h3>
 
-<p align="center"><a href="https://ericlbuehler.github.io/constensor/constensor_core/"><b>Rust Documentation</b></a>
+<p align="center"><a href="https://docs.rs/constensor/latest/constensor/"><b>Docs</b></a>
 
 </p>
 
