@@ -434,7 +434,6 @@ macro_rules! test_for_device_log {
                 let _res = x.log();
                 let compiled: CompiledGraph<R2<3, 4>, f32, $dev> = graph.compile().unwrap();
                 let tensor = compiled.run().unwrap();
-                // 检查结果是否接近 1.0（ln(e) = 1）
                 for row in tensor.data().unwrap().iter() {
                     for &val in row.iter() {
                         assert!((val - 1.0).abs() < 1e-6);
